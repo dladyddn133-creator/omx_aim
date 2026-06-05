@@ -36,7 +36,8 @@ alias omxenv='source /opt/ros/jazzy/setup.bash && source ~/venv/omx_ros/bin/acti
 ```bash
 omxenv
 
-python3 apps/keyboard_teleop.py
-python3 apps/aim_test.py --dry-run
-python3 apps/yolo_test.py --dry-run
+python3 keyboard_teleop.py
+python3 omx_aim.py
+python3 omx_yolo_test.py
+python3 omx_track.py
 ```
