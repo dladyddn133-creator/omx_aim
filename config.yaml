@@ -1,0 +1,93 @@
+# OMX 통합 설정 파일
+#
+# 이 파일을 수정해서 캘리브레이션, 게인, 한계 등을 조정합니다.
+# 코드 수정 불필요.
+#
+# 환경별로 여러 파일 사용 가능:
+#   configs/desktop.yaml  (개발용)
+#   configs/raspi.yaml    (와플 통합용)
+
+# ===========================================================
+# 모터 통신 / 속도
+# ===========================================================
+motor:
+  port: /dev/omx_follower
+  profile_velocity: 30        # 0 = 최대속도(위험). 30 = 매우 천천히
+  profile_acceleration: 10
+
+  # elbow_flex PID (omx_follower 기본값)
+  elbow_p_gain: 1500
+  elbow_i_gain: 0
+  elbow_d_gain: 600
+
+
+# ===========================================================
+# 캘리브레이션 (실측 후 조정)
+# ===========================================================
+
+calibration:
+  # 각 joint 가 0 rad 일 때의 raw tick.
+  # `--measure-home` 모드로 측정한 값을 여기 박아넣으세요.
+  home:
+    shoulder_pan:  2075
+    shoulder_lift: 1257
+    elbow_flex:    2749
+    wrist_flex:    1692
+    wrist_roll:    2024
+    gripper:       3217
+
+  # 회전 방향 부호. 검증 후 반대로 돌면 -1 로 뒤집기.
+  sign:
+    shoulder_pan:  1
+    shoulder_lift: 1
+    elbow_flex:    1
+    wrist_flex:    1
+    wrist_roll:    1
+
+
+# ===========================================================
+# 안전 한계
+# ===========================================================
+safety:
+  # 관절별 안전 각도 범위 (도 단위). IK 결과가 이 범위 밖이면 clamp.
+  angle_limits_deg:
+    shoulder_pan:  [-90,  90]
+    shoulder_lift: [-60,  60]
+    elbow_flex:    [-90,  90]
+    wrist_flex:    [-90,  90]
+    wrist_roll:    [-180, 180]
+
+  # IBVS 한 step 당 최대 변화 (도)
+  max_step_deg: 2.0
+
+  # 한 번에 이 tick 이상 움직이는 명령은 사용자 확인 요구
+  large_delta_threshold_tick: 500
+
+
+# ===========================================================
+# 키보드 teleop
+# ===========================================================
+keyboard:
+  arm_step: 13              # 키 한 번에 raw tick (joint 1~5)
+  gripper_step: 25          # 키 한 번에 raw tick (gripper)
+  command_interval: 0.02    # 명령 간 최소 간격 (초)
+
+
+# ===========================================================
+# IBVS (visual servoing)
+# ===========================================================
+ibvs:
+  camera_index: 0
+  kp_yaw:   0.02            # 비례 게인 (rad / normalized error)
+  kp_pitch: 0.02
+  sign_vs_x: -1             # 카메라 마운팅에 따른 부호
+  sign_vs_y: 1
+  deadband:    0.03         # 화면 폭의 3%
+  control_hz:  25.0         # 제어 주기
+
+yolo:
+  model_path: ./models/best.pt    # 학습 모델 쓸 때는 ./models/best.pt 같은 경로로 교체
+  target_class: 1           # 67=cell phone, 39=bottle, 41=cup, 0=person, 47=apple
+  conf_threshold: 0.5        # 0.0~1.0. 낮을수록 더 많이 검출 (오검출 늘어남)
+  imgsz: 640                 # 추론 해상도. 320 = 빠름, 640 = 기본, 1280 = 정확
+ 

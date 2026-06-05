@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.Python
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# YOLO 모델 (큰 파일, github 100MB 제한)
+*.pt
+*.onnx
+*.engine
+models/*.pt
+models/*.onnx
+models/*.engine
+
+# YOLO 자동 생성 (학습 결과)
+runs/
+yolo*.pt          # 자동 다운로드되는 yolov8n.pt, yolo11s.pt 등
+
+# OpenCV 테스트 잔여물
+bus.jpg
+*.jpg.backup
+
+# ROS 빌드
+build/
+install/
+log/
+
+# 데이터셋
+data/
+recordings/
+datasets/
+
+# 임시 파일
+*.tmp
+*.bak
+*.orig
+.DS_Store
+Thumbs.db
+
+# 개인 메모 / 임시 스크립트
+TODO.md
+notes.md
+scratch_*.py
+test_*.py
+
+# 환경 변수
+.env
+*.local
+
+# 로그
+*.log
