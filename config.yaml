@@ -51,7 +51,7 @@ calibration:
 safety:
   # 관절별 안전 각도 범위 (도 단위). IK 결과가 이 범위 밖이면 clamp.
   angle_limits_deg:
-    shoulder_pan:  [-90,  90]
+    shoulder_pan:  [-110,  110]
     shoulder_lift: [-60,  60]
     elbow_flex:    [-90,  90]
     wrist_flex:    [-90,  90]
@@ -91,3 +91,48 @@ yolo:
   conf_threshold: 0.5        # 0.0~1.0. 낮을수록 더 많이 검출 (오검출 늘어남)
   imgsz: 640                 # 추론 해상도. 320 = 빠름, 640 = 기본, 1280 = 정확
  
+# ===========================================================
+# 격발 & 상태 머신
+# ===========================================================
+fire:
+  # 격발 직전 확인 (CONFIRMING 상태)
+  hold_time_sec: 0.5            # deadband 안 유지 시간
+  confirm_deadband_scale: 1.0   # IBVS deadband 의 N배 (1.0 = 같음, 더 좁게 하려면 0.5)
+  
+  # 격발 동작 (gripper 시뮬레이션)
+  gripper_close_pos: 1000       # 격발 시 gripper raw tick
+  gripper_open_pos: 3217        # 격발 후 위치 (보통 home 값)
+  gripper_close_duration: 0.3   # 닫기 동작 시간
+  gripper_open_duration: 0.3    # 열기 동작 시간
+  
+  # 격발 후 cooldown
+  cooldown_sec: 5.0             # 격발 후 home + 대기
+ 
+# ===========================================================
+# Auto-track (자율 검출)
+# ===========================================================
+autotrack:
+  # IDLE 상태에서 카메라가 표적 검출 시 자율 추적 시작?
+  # 안전: 기본 비활성, /omx/arm_enable 또는 'a' 키로 활성화
+  default_armed: false
+  
+  # 중복 표적 방지: 처리한 표적 좌표와 비교
+  duplicate_threshold_m: 0.5    # 이 거리 안 표적은 중복 간주
+
+# 기존 config.yaml 끝에 추가할 patrol 섹션
+ 
+# ===========================================================
+# 정찰 + 우선순위 큐
+# ===========================================================
+patrol:
+  # SCANNING 상태에서 표적 안 보일 때 기다리는 시간
+  # 이 시간 안에 검출 안 되면 다음 좌표로
+  scan_timeout_sec: 2.0
+  
+  # 큐 최대 크기 (넘으면 오래된 LOW 우선 제거)
+  max_queue_size: 20
+  
+  # 중복 좌표 무시 거리 (미터)
+  # 큐에 이미 비슷한 좌표 있으면 추가 안 함
+  # 처리 직후의 last_processed 와도 비교
+  duplicate_threshold_m: 0.3

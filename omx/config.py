@@ -1,7 +1,4 @@
-"""Config 로딩 및 dataclass 변환.
-
-config.yaml 을 읽어서 type-safe 한 dataclass 로 변환합니다.
-"""
+"""Config 로딩 및 dataclass 변환."""
 
 from __future__ import annotations
 
@@ -11,10 +8,6 @@ from pathlib import Path
 
 import yaml
 
-
-# ===========================================================
-# Dataclass 정의
-# ===========================================================
 
 @dataclass
 class MotorConfig:
@@ -76,18 +69,42 @@ class YoloConfig:
 
 
 @dataclass
+class FireConfig:
+    hold_time_sec: float
+    confirm_deadband_scale: float
+    gripper_close_pos: int
+    gripper_open_pos: int
+    gripper_close_duration: float
+    gripper_open_duration: float
+    cooldown_sec: float
+
+
+@dataclass
+class AutoTrackConfig:
+    default_armed: bool
+    duplicate_threshold_m: float
+
+
+@dataclass
+class PatrolConfig:
+    """정찰 + 우선순위 큐."""
+    scan_timeout_sec: float
+    max_queue_size: int
+    duplicate_threshold_m: float
+
+
+@dataclass
 class Config:
     motor: MotorConfig
     calibration: CalibrationConfig
     safety: SafetyConfig
     keyboard: KeyboardConfig
     ibvs: IbvsConfig
-    yolo: YoloConfig | None = None   # 선택적 (yolo 안 쓰는 앱도 있음)
+    yolo: YoloConfig | None = None
+    fire: FireConfig | None = None
+    autotrack: AutoTrackConfig | None = None
+    patrol: PatrolConfig | None = None
 
-
-# ===========================================================
-# 로딩
-# ===========================================================
 
 def find_config_path(path: str | None = None) -> Path:
     if path is not None:
@@ -106,12 +123,12 @@ def find_config_path(path: str | None = None) -> Path:
             return c
 
     raise FileNotFoundError(
-        "config.yaml 을 찾을 수 없습니다. 다음 위치를 확인하세요:\n"
+        "config.yaml 을 찾을 수 없습니다:\n"
         + "\n".join(f"  - {c}" for c in candidates)
     )
 
 
-def _tuple_pairs(d: dict[str, list[float]]) -> dict[str, tuple[float, float]]:
+def _tuple_pairs(d):
     out = {}
     for k, v in d.items():
         if len(v) != 2:
@@ -120,16 +137,16 @@ def _tuple_pairs(d: dict[str, list[float]]) -> dict[str, tuple[float, float]]:
     return out
 
 
-def load_config(path: str | None = None) -> Config:
+def load_config(path=None):
     config_path = find_config_path(path)
     with open(config_path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
 
     try:
-        # yolo 섹션은 선택적
-        yolo_cfg = None
-        if "yolo" in raw:
-            yolo_cfg = YoloConfig(**raw["yolo"])
+        yolo_cfg = YoloConfig(**raw["yolo"]) if "yolo" in raw else None
+        fire_cfg = FireConfig(**raw["fire"]) if "fire" in raw else None
+        autotrack_cfg = AutoTrackConfig(**raw["autotrack"]) if "autotrack" in raw else None
+        patrol_cfg = PatrolConfig(**raw["patrol"]) if "patrol" in raw else None
 
         cfg = Config(
             motor=MotorConfig(**raw["motor"]),
@@ -142,11 +159,13 @@ def load_config(path: str | None = None) -> Config:
             keyboard=KeyboardConfig(**raw["keyboard"]),
             ibvs=IbvsConfig(**raw["ibvs"]),
             yolo=yolo_cfg,
+            fire=fire_cfg,
+            autotrack=autotrack_cfg,
+            patrol=patrol_cfg,
         )
     except (KeyError, TypeError) as e:
         raise ValueError(
-            f"Config 파일 형식 오류 ({config_path}): {e}\n"
-            f"config.yaml 의 키들이 맞는지 확인하세요."
+            f"Config 파일 형식 오류 ({config_path}): {e}"
         ) from e
 
     return cfg
