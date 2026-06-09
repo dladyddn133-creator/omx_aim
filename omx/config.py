@@ -77,7 +77,7 @@ class FireConfig:
     gripper_close_duration: float
     gripper_open_duration: float
     cooldown_sec: float
-
+    lost_timeout_sec: float = 1.5
 
 @dataclass
 class AutoTrackConfig:

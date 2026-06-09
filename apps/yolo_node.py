@@ -1,41 +1,26 @@
 #!/usr/bin/env python3
-"""OMX YOLO tracker with state machine and fire control.
+"""OMX YOLO tracker with state machine, priority queue, fire control + target_lost.
 
 상태 머신:
-    IDLE        - 좌표 받음 (AIMING) 또는 armed & 검출 (TRACKING)
-    AIMING      - coarse IK 조준 -> TRACKING
-    TRACKING    - YOLO + IBVS, deadband 진입 -> CONFIRMING
-    CONFIRMING  - 0.5초 유지 -> FIRING / 이탈 -> TRACKING
+    IDLE        - 큐 있으면 다음 좌표 pop -> AIMING
+    AIMING      - coarse IK 조준 -> SCANNING
+    SCANNING    - 표적 검출 시도 (scan_timeout_sec)
+    TRACKING    - YOLO + IBVS
+                  표적 잃음 (lost_timeout_sec) -> IDLE + target_lost 발행
+                  deadband 진입 -> CONFIRMING
+    CONFIRMING  - hold_time_sec 유지 -> FIRING
     FIRING      - gripper 격발 -> COOLDOWN
-    COOLDOWN    - 5초 대기 + home -> IDLE
-
-내부 클래스:
-    YoloDetector  - 카메라 + YOLO 검출
-    OmxController - OMX 모터 제어 + IK + IBVS + 격발
-    StateMachine  - 상태 전이 로직
-    OmxYoloNode   - ROS 통합
+    COOLDOWN    - cooldown_sec 대기 + home -> IDLE
 
 Publish:
-    /omx/status              std_msgs/String        1 Hz
-    /omx/state               std_msgs/String        상태 변경 시
-    /omx/target_detected     std_msgs/Bool          매 프레임
-    /omx/error_norm          geometry_msgs/Point    검출 시
-    /omx/joint_state         sensor_msgs/JointState 매 프레임
-    /omx/fire                std_msgs/Empty         격발 1회
-    /omx/target_processed    geometry_msgs/Point    처리 완료
-    /omx/aim_progress        std_msgs/Float32       CONFIRMING 진행도
+    /omx/status, /omx/state, /omx/target_detected, /omx/error_norm
+    /omx/joint_state, /omx/fire, /omx/target_processed
+    /omx/target_lost   ← 새로
+    /omx/aim_progress, /omx/queue_size, /omx/patrol_complete
 
 Subscribe:
-    /omx/control_mode        std_msgs/String        모드 (idle)
-    /omx/target_coord        geometry_msgs/Point    표적 좌표
-    /omx/arm_enable          std_msgs/Bool          자율 검출 허용
-    /omx/abort               std_msgs/Empty         비상 정지
-
-키:
-    p   - pause
-    a   - arm/disarm 토글
-    h   - home (수동)
-    ESC - 종료
+    /omx/control_mode, /omx/target_coord (HIGH), /omx/patrol_coord (NORMAL)
+    /omx/arm_enable, /omx/abort
 """
 
 from __future__ import annotations
@@ -45,16 +30,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import heapq
+import itertools
 import math
 import time
-from enum import Enum
+from dataclasses import dataclass, field
+from enum import Enum, IntEnum
 from typing import Optional
 
 import cv2
 import rclpy
 from rclpy.node import Node
 
-from std_msgs.msg import String, Bool, Float32, Empty
+from std_msgs.msg import String, Bool, Float32, Empty, Int32
 from geometry_msgs.msg import Point
 from sensor_msgs.msg import JointState
 
@@ -71,10 +59,29 @@ RAD2TICK = TICKS_PER_REV / (2.0 * math.pi)
 class State(Enum):
     IDLE = "idle"
     AIMING = "aiming"
+    SCANNING = "scanning"
     TRACKING = "tracking"
     CONFIRMING = "confirming"
     FIRING = "firing"
     COOLDOWN = "cooldown"
+
+
+class Priority(IntEnum):
+    HIGH = 0
+    NORMAL = 10
+    LOW = 20
+
+
+_entry_counter = itertools.count()
+
+
+@dataclass(order=True)
+class TargetEntry:
+    priority: int
+    count: int = field(default_factory=lambda: next(_entry_counter))
+    coord: tuple = field(compare=False, default=(0.0, 0.0, 0.0))
+    source: str = field(compare=False, default="unknown")
+    arrival_time: float = field(compare=False, default=0.0)
 
 
 # ===========================================================
@@ -82,8 +89,6 @@ class State(Enum):
 # ===========================================================
 
 class YoloDetector:
-    """카메라 frame 캡처 + YOLO 검출."""
-
     def __init__(self, cfg: Config, logger=None):
         self.cfg = cfg
         self.logger = logger
@@ -112,7 +117,6 @@ class YoloDetector:
         return frame if ok else None
 
     def detect(self, frame):
-        """반환: (detected, error_norm, bbox, conf)."""
         h, w = frame.shape[:2]
         cx, cy = w / 2.0, h / 2.0
 
@@ -151,8 +155,6 @@ class YoloDetector:
 # ===========================================================
 
 class OmxController:
-    """OMX 모터 제어 + IK + IBVS + 격발."""
-
     def __init__(self, cfg: Config, dry_run: bool = False, logger=None):
         self.cfg = cfg
         self.dry_run = dry_run
@@ -212,8 +214,7 @@ class OmxController:
         self.pitch = 0.0
         self._log("Home 도달")
 
-    def aim_at_coord(self, x: float, y: float, z: float):
-        """Point-at IK 조준."""
+    def aim_at_coord(self, x, y, z):
         if x == 0.0 and y == 0.0 and z == 0.0:
             self._log("원점 좌표는 가리킬 수 없음", "warn")
             return
@@ -247,7 +248,7 @@ class OmxController:
         self._log(f"Coarse aim: yaw={math.degrees(new_yaw):.1f}, "
                   f"pitch={math.degrees(new_pitch):.1f}")
 
-    def step_ibvs(self, error_x: float, error_y: float) -> bool:
+    def step_ibvs(self, error_x, error_y):
         max_step = self.cfg.safety.max_step_rad
         deadband = self.cfg.ibvs.deadband
 
@@ -289,7 +290,6 @@ class OmxController:
         return True
 
     def fire(self):
-        """gripper 닫았다 펴서 격발 시뮬레이션."""
         if self.dry_run:
             self._log("[dry-run] 격발 시뮬레이션")
             time.sleep(self.cfg.fire.gripper_close_duration)
@@ -333,26 +333,27 @@ class OmxController:
 # ===========================================================
 
 class StateMachine:
-    """OMX 상태 전이 관리.
-    
-    미래 큐 도입 시 target_coord 관리 로직만 변경하면 됨.
-    """
-
     def __init__(self, cfg: Config, logger=None):
         self.cfg = cfg
         self.logger = logger
         self.state = State.IDLE
 
-        # 현재 처리 중인 표적 (미래 큐로 발전)
-        self.target_coord: Optional[tuple] = None
-        
+        # 큐
+        self.queue: list[TargetEntry] = []
+        self.current_target: Optional[TargetEntry] = None
+
+        # 타이밍
+        self.scan_start_t: float = 0.0
         self.confirm_start_t: float = 0.0
         self.confirm_progress: float = 0.0
         self.cooldown_until: float = 0.0
         self.cooldown_home_sent: bool = False
+        self.lost_start_t: float = 0.0   # TRACKING 중 표적 잃은 시각
 
+        # 기타
         self.armed = cfg.autotrack.default_armed if cfg.autotrack else False
         self.last_processed: Optional[tuple] = None
+        self.patrol_complete_sent = True
 
     def _log(self, msg):
         if self.logger:
@@ -365,68 +366,163 @@ class StateMachine:
             self._log(f"State: {self.state.value} -> {new_state.value}")
             self.state = new_state
 
-    def on_target_coord(self, coord) -> bool:
-        """외부 좌표 수신. accepted 반환."""
-        # Option A: CONFIRMING 이후는 무시
-        if self.state in (State.CONFIRMING, State.FIRING, State.COOLDOWN):
-            self._log(f"좌표 무시 (state={self.state.value}, 격발 우선)")
+    # 큐 관리
+    def add_target(self, coord, priority: Priority, source: str) -> bool:
+        if self.state in (State.CONFIRMING, State.FIRING):
+            self._log(f"좌표 무시 (state={self.state.value}, 격발 우선): "
+                      f"{source} priority={priority.name}")
             return False
-
+        
         if self._is_duplicate(coord):
-            self._log(f"좌표 무시 (이미 처리한 표적)")
+            self._log(f"좌표 중복 무시: {coord}")
             return False
-
-        self.target_coord = coord
-        self._log(f"표적 좌표 받음: {coord}")
-
-        if self.state in (State.IDLE, State.TRACKING):
-            self.transition(State.AIMING)
+        
+        max_size = self.cfg.patrol.max_queue_size if self.cfg.patrol else 20
+        if len(self.queue) >= max_size:
+            removed = self._remove_oldest_low_priority()
+            if not removed:
+                self._log(f"큐 가득 ({max_size}), 추가 거부")
+                return False
+        
+        entry = TargetEntry(
+            priority=int(priority),
+            coord=coord,
+            source=source,
+            arrival_time=time.time(),
+        )
+        heapq.heappush(self.queue, entry)
+        self.patrol_complete_sent = False
+        
+        self._log(f"큐 추가: {source} priority={priority.name} "
+                  f"coord={coord}, 큐크기={len(self.queue)}")
         return True
 
     def _is_duplicate(self, coord) -> bool:
-        if not self.last_processed or not self.cfg.autotrack:
+        if not self.cfg.patrol:
             return False
-        dx = coord[0] - self.last_processed[0]
-        dy = coord[1] - self.last_processed[1]
-        dz = coord[2] - self.last_processed[2]
-        dist = math.sqrt(dx*dx + dy*dy + dz*dz)
-        return dist < self.cfg.autotrack.duplicate_threshold_m
+        threshold = self.cfg.patrol.duplicate_threshold_m
+        
+        if self.last_processed:
+            if self._distance(coord, self.last_processed) < threshold:
+                return True
+        
+        for entry in self.queue:
+            if self._distance(coord, entry.coord) < threshold:
+                return True
+        
+        if self.current_target:
+            if self._distance(coord, self.current_target.coord) < threshold:
+                return True
+        
+        return False
+
+    def _distance(self, a, b):
+        return math.sqrt(sum((ai - bi)**2 for ai, bi in zip(a, b)))
+
+    def _remove_oldest_low_priority(self) -> bool:
+        if not self.queue:
+            return False
+        max_idx = 0
+        for i, entry in enumerate(self.queue):
+            if (entry.priority > self.queue[max_idx].priority or
+                (entry.priority == self.queue[max_idx].priority
+                 and entry.count < self.queue[max_idx].count)):
+                max_idx = i
+        
+        removed = self.queue.pop(max_idx)
+        heapq.heapify(self.queue)
+        self._log(f"큐 가득, 오래된 {removed.source} priority={removed.priority} 제거")
+        return True
+
+    def pop_next(self) -> Optional[TargetEntry]:
+        if not self.queue:
+            return None
+        return heapq.heappop(self.queue)
+
+    def clear_queue(self):
+        self.queue.clear()
+        self.current_target = None
+        self._log("큐 비움")
+
+    def queue_size(self) -> int:
+        return len(self.queue)
+
+    # 외부 이벤트
+    def on_external_target(self, coord) -> bool:
+        return self.add_target(coord, Priority.HIGH, "external")
+
+    def on_patrol_target(self, coord) -> bool:
+        return self.add_target(coord, Priority.NORMAL, "patrol")
 
     def on_abort(self):
-        self._log("ABORT - IDLE 로 전이")
+        self._log("ABORT - IDLE + 큐 비움")
         self.transition(State.IDLE)
-        self.target_coord = None
+        self.clear_queue()
         self.confirm_progress = 0.0
         self.cooldown_home_sent = False
+        self.patrol_complete_sent = True
+        self.lost_start_t = 0.0
 
     def on_arm_enable(self, armed: bool):
         self.armed = armed
         self._log(f"Armed: {armed}")
 
+    # 메인 update
     def update(self, detected: bool, error_norm, now: float) -> dict:
-        """매 frame 호출. 다음 action 반환."""
         action = {
             'action': 'wait',
             'state': self.state,
             'target_coord': None,
             'error': None,
             'confirm_progress': 0.0,
+            'patrol_complete': False,
+            'lost_coord': None,
         }
 
         if self.state == State.IDLE:
-            if self.armed and detected:
+            if self.queue:
+                self.current_target = self.pop_next()
+                self._log(f"큐에서 pop: {self.current_target.source} "
+                          f"priority={self.current_target.priority} "
+                          f"coord={self.current_target.coord}")
+                self.transition(State.AIMING)
+            elif self.armed and detected:
                 self._log("Autonomous detection -> TRACKING")
                 self.transition(State.TRACKING)
+            else:
+                if not self.patrol_complete_sent:
+                    action['patrol_complete'] = True
+                    self.patrol_complete_sent = True
+                    self._log("정찰 완료 - 큐 비었음")
 
         elif self.state == State.AIMING:
-            if self.target_coord:
+            if self.current_target:
                 action['action'] = 'aim'
-                action['target_coord'] = self.target_coord
-                self.last_processed = self.target_coord
+                action['target_coord'] = self.current_target.coord
+                self.last_processed = self.current_target.coord
+                self.transition(State.SCANNING)
+                self.scan_start_t = now
+
+        elif self.state == State.SCANNING:
+            if detected:
+                self._log("SCANNING 중 표적 발견 -> TRACKING")
+                self.lost_start_t = 0.0
                 self.transition(State.TRACKING)
+            else:
+                scan_timeout = (self.cfg.patrol.scan_timeout_sec
+                                if self.cfg.patrol else 2.0)
+                if now - self.scan_start_t >= scan_timeout:
+                    self._log(
+                        f"SCANNING {scan_timeout}s 끝, 표적 없음 -> IDLE "
+                        f"(큐: {len(self.queue)}개 대기)")
+                    self.current_target = None
+                    self.transition(State.IDLE)
 
         elif self.state == State.TRACKING:
             if detected:
+                # 검출됨 - lost 카운터 리셋
+                self.lost_start_t = 0.0
+                
                 ex, ey = error_norm
                 deadband = self.cfg.ibvs.deadband
                 if abs(ex) < deadband and abs(ey) < deadband:
@@ -437,6 +533,29 @@ class StateMachine:
                 else:
                     action['action'] = 'track'
                     action['error'] = error_norm
+            else:
+                # 표적 안 보임 - 타임아웃 체크
+                if self.lost_start_t == 0.0:
+                    self.lost_start_t = now
+                    self._log("TRACKING 중 표적 사라짐 (타임아웃 대기 시작)")
+                
+                elapsed = now - self.lost_start_t
+                timeout = self.cfg.fire.lost_timeout_sec
+                
+                if elapsed >= timeout:
+                    self._log(
+                        f"TRACKING 중 표적 {timeout:.1f}s 잃음 -> IDLE "
+                        f"(큐: {len(self.queue)}개 대기)")
+                    
+                    # last_processed 에 기록 (중복 방지)
+                    if self.current_target:
+                        self.last_processed = self.current_target.coord
+                        action['lost_coord'] = self.current_target.coord
+                    
+                    action['action'] = 'target_lost'
+                    self.current_target = None
+                    self.lost_start_t = 0.0
+                    self.transition(State.IDLE)
 
         elif self.state == State.CONFIRMING:
             if not detected:
@@ -470,10 +589,10 @@ class StateMachine:
         elif self.state == State.COOLDOWN:
             if now >= self.cooldown_until:
                 self._log("Cooldown 끝 -> IDLE")
-                self.transition(State.IDLE)
-                self.target_coord = None
+                self.current_target = None
                 self.confirm_progress = 0.0
                 self.cooldown_home_sent = False
+                self.transition(State.IDLE)
             else:
                 if not self.cooldown_home_sent:
                     action['action'] = 'home'
@@ -502,6 +621,16 @@ class OmxYoloNode(Node):
             raise RuntimeError("config.yaml 에 yolo 섹션 필요")
         if self.cfg.autotrack is None:
             raise RuntimeError("config.yaml 에 autotrack 섹션 필요")
+        if self.cfg.patrol is None:
+            raise RuntimeError("config.yaml 에 patrol 섹션 필요")
+        
+        self.get_logger().info(
+            f"Patrol: scan_timeout={self.cfg.patrol.scan_timeout_sec}s, "
+            f"max_queue={self.cfg.patrol.max_queue_size}")
+        self.get_logger().info(
+            f"Fire: hold={self.cfg.fire.hold_time_sec}s, "
+            f"cooldown={self.cfg.fire.cooldown_sec}s, "
+            f"lost_timeout={self.cfg.fire.lost_timeout_sec}s")
 
         self.detector = YoloDetector(self.cfg, logger=self.get_logger())
         self.ctrl = OmxController(self.cfg, dry_run=dry_run,
@@ -526,21 +655,25 @@ class OmxYoloNode(Node):
         self.pub_joint = self.create_publisher(JointState, '/omx/joint_state', 10)
         self.pub_fire = self.create_publisher(Empty, '/omx/fire', 10)
         self.pub_processed = self.create_publisher(Point, '/omx/target_processed', 10)
+        self.pub_target_lost = self.create_publisher(Point, '/omx/target_lost', 10)
         self.pub_progress = self.create_publisher(Float32, '/omx/aim_progress', 10)
+        self.pub_queue_size = self.create_publisher(Int32, '/omx/queue_size', 10)
+        self.pub_patrol_complete = self.create_publisher(Empty, '/omx/patrol_complete', 10)
 
         # Subscribers
         self.create_subscription(String, '/omx/control_mode',
                                  self.on_control_mode, 10)
         self.create_subscription(Point, '/omx/target_coord',
                                  self.on_target_coord, 10)
+        self.create_subscription(Point, '/omx/patrol_coord',
+                                 self.on_patrol_coord, 10)
         self.create_subscription(Bool, '/omx/arm_enable',
                                  self.on_arm_enable, 10)
         self.create_subscription(Empty, '/omx/abort',
                                  self.on_abort, 10)
 
-        # Timer
         self.timer = self.create_timer(self.control_period, self.loop)
-        self.status_timer = self.create_timer(1.0, self.publish_status)
+        self.status_timer = self.create_timer(1.0, self.publish_periodic)
 
         self._last_state = self.sm.state
 
@@ -549,8 +682,7 @@ class OmxYoloNode(Node):
         self.get_logger().info(f"Initial armed: {self.sm.armed}")
         self.get_logger().info("=== Node ready ===")
 
-    # ----- Subscribers -----
-
+    # Subscribers
     def on_control_mode(self, msg):
         if msg.data == "idle":
             self.sm.on_abort()
@@ -558,7 +690,11 @@ class OmxYoloNode(Node):
 
     def on_target_coord(self, msg):
         coord = (msg.x, msg.y, msg.z)
-        self.sm.on_target_coord(coord)
+        self.sm.on_external_target(coord)
+
+    def on_patrol_coord(self, msg):
+        coord = (msg.x, msg.y, msg.z)
+        self.sm.on_patrol_target(coord)
 
     def on_arm_enable(self, msg):
         self.sm.on_arm_enable(msg.data)
@@ -567,9 +703,8 @@ class OmxYoloNode(Node):
         self.sm.on_abort()
         self.ctrl.go_home()
 
-    # ----- Publishers -----
-
-    def publish_status(self):
+    # Publishers
+    def publish_periodic(self):
         msg = String()
         prefix = ""
         if self.dry_run:
@@ -578,6 +713,10 @@ class OmxYoloNode(Node):
             prefix = "paused_"
         msg.data = f"{prefix}{self.sm.state.value}"
         self.pub_status.publish(msg)
+        
+        qmsg = Int32()
+        qmsg.data = self.sm.queue_size()
+        self.pub_queue_size.publish(qmsg)
 
     def publish_state_change(self):
         if self.sm.state != self._last_state:
@@ -624,8 +763,19 @@ class OmxYoloNode(Node):
         msg.x, msg.y, msg.z = coord
         self.pub_processed.publish(msg)
 
-    # ----- Main loop -----
+    def publish_target_lost(self, coord):
+        if coord is None:
+            return
+        msg = Point()
+        msg.x, msg.y, msg.z = coord
+        self.pub_target_lost.publish(msg)
+        self.get_logger().info(f"[target_lost] 발행: {coord}")
 
+    def publish_patrol_complete(self):
+        self.pub_patrol_complete.publish(Empty())
+        self.get_logger().info("[patrol_complete] 발행")
+
+    # Main loop
     def loop(self):
         frame = self.detector.read_frame()
         if frame is None:
@@ -637,21 +787,25 @@ class OmxYoloNode(Node):
         now = time.time()
         action = self.sm.update(detected, error_norm, now)
 
-        # action 수행
         if not self.paused:
             if action['action'] == 'aim':
                 self.ctrl.aim_at_coord(*action['target_coord'])
             elif action['action'] == 'track':
                 self.ctrl.step_ibvs(*action['error'])
             elif action['action'] == 'fire':
-                processed = self.sm.target_coord
+                processed = (self.sm.current_target.coord
+                             if self.sm.current_target else None)
                 self.publish_fire()
                 self.ctrl.fire()
                 self.publish_processed(processed)
+            elif action['action'] == 'target_lost':
+                self.publish_target_lost(action.get('lost_coord'))
             elif action['action'] == 'home':
                 self.ctrl.go_home()
+        
+        if action.get('patrol_complete', False):
+            self.publish_patrol_complete()
 
-        # Publish
         self.publish_detected(detected)
         if error_norm is not None:
             self.publish_error(error_norm[0], error_norm[1])
@@ -659,14 +813,11 @@ class OmxYoloNode(Node):
         self.publish_progress(action.get('confirm_progress', 0.0))
         self.publish_state_change()
 
-        # 시각화
         self.visualize(frame, detected, error_norm, bbox, conf, action)
 
-        # 키
         key = cv2.waitKey(1) & 0xFF
         self._handle_key(key)
 
-        # FPS
         self.fps_n += 1
         if now - self.fps_t >= 1.0:
             self.fps_disp = self.fps_n / (now - self.fps_t)
@@ -678,7 +829,6 @@ class OmxYoloNode(Node):
         cx, cy = w / 2.0, h / 2.0
         deadband = self.cfg.ibvs.deadband
 
-        # 중심 + deadband
         cv2.drawMarker(frame, (int(cx), int(cy)),
                        (0, 255, 255), cv2.MARKER_CROSS, 20, 1)
         dz_x = int(deadband * cx)
@@ -688,12 +838,12 @@ class OmxYoloNode(Node):
                       (int(cx) + dz_x, int(cy) + dz_y),
                       (80, 80, 80), 1)
 
-        # 검출 박스 (상태별 색)
         if detected and bbox:
             x1, y1, x2, y2 = bbox
             state_color = {
                 State.IDLE: (180, 180, 180),
                 State.AIMING: (255, 200, 0),
+                State.SCANNING: (200, 255, 200),
                 State.TRACKING: (0, 255, 0),
                 State.CONFIRMING: (0, 165, 255),
                 State.FIRING: (0, 0, 255),
@@ -710,7 +860,6 @@ class OmxYoloNode(Node):
                         (x1, max(y1 - 8, 16)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
-        # 상태 표시
         state_txt = f"[{self.sm.state.value.upper()}]"
         if self.paused:
             state_txt = f"[PAUSED|{self.sm.state.value}]"
@@ -718,16 +867,55 @@ class OmxYoloNode(Node):
             state_txt = f"[DRY|{self.sm.state.value}]"
 
         armed_txt = "ARMED" if self.sm.armed else "DISARMED"
+        queue_txt = f"Q:{self.sm.queue_size()}"
 
         cv2.putText(frame,
-                    f"{state_txt} {armed_txt} "
+                    f"{state_txt} {armed_txt} {queue_txt} "
                     f"yaw={math.degrees(self.ctrl.yaw):+.1f} "
                     f"pitch={math.degrees(self.ctrl.pitch):+.1f} "
                     f"fps={self.fps_disp:.1f}",
                     (10, 25), cv2.FONT_HERSHEY_SIMPLEX,
                     0.55, (255, 255, 255), 2)
 
-        # CONFIRMING 진행도 바
+        # TRACKING 중 lost 카운트다운
+        if (self.sm.state == State.TRACKING
+                and self.sm.lost_start_t > 0.0):
+            elapsed = time.time() - self.sm.lost_start_t
+            timeout = self.cfg.fire.lost_timeout_sec
+            lost_progress = min(1.0, elapsed / timeout)
+            
+            bar_x, bar_y, bar_w, bar_h = 10, h - 100, 200, 12
+            cv2.rectangle(frame, (bar_x, bar_y),
+                         (bar_x + bar_w, bar_y + bar_h),
+                         (100, 100, 100), 1)
+            cv2.rectangle(frame, (bar_x, bar_y),
+                         (bar_x + int(bar_w * lost_progress), bar_y + bar_h),
+                         (0, 100, 255), -1)
+            cv2.putText(frame,
+                        f"LOST {elapsed:.1f}/{timeout:.1f}s",
+                        (bar_x + bar_w + 10, bar_y + 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 100, 100), 1)
+
+        # SCANNING 진행도
+        if self.sm.state == State.SCANNING:
+            scan_timeout = (self.cfg.patrol.scan_timeout_sec
+                            if self.cfg.patrol else 2.0)
+            elapsed = time.time() - self.sm.scan_start_t
+            scan_progress = min(1.0, elapsed / scan_timeout)
+            
+            bar_x, bar_y, bar_w, bar_h = 10, h - 80, 200, 12
+            cv2.rectangle(frame, (bar_x, bar_y),
+                         (bar_x + bar_w, bar_y + bar_h),
+                         (100, 100, 100), 1)
+            cv2.rectangle(frame, (bar_x, bar_y),
+                         (bar_x + int(bar_w * scan_progress), bar_y + bar_h),
+                         (100, 255, 100), -1)
+            cv2.putText(frame,
+                        f"SCAN {elapsed:.1f}/{scan_timeout:.1f}s",
+                        (bar_x + bar_w + 10, bar_y + 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+        # CONFIRMING 진행도
         progress = action.get('confirm_progress', 0.0)
         if progress > 0 or self.sm.state == State.CONFIRMING:
             bar_x, bar_y, bar_w, bar_h = 10, h - 60, 200, 15
@@ -747,7 +935,7 @@ class OmxYoloNode(Node):
                         (10, h - 40), cv2.FONT_HERSHEY_SIMPLEX,
                         0.5, (255, 255, 255), 1)
 
-        cv2.putText(frame, "p:pause a:arm h:home ESC:quit",
+        cv2.putText(frame, "p:pause a:arm h:home/clear ESC:quit",
                     (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX,
                     0.45, (180, 180, 180), 1)
 
@@ -764,7 +952,7 @@ class OmxYoloNode(Node):
             self.sm.armed = not self.sm.armed
             self.get_logger().info(f"Armed: {self.sm.armed}")
         elif key == ord('h'):
-            self.get_logger().info("Home 복귀 (수동)")
+            self.get_logger().info("Home + 큐 비움 (수동)")
             self.sm.on_abort()
             self.ctrl.go_home()
 
@@ -784,7 +972,7 @@ class OmxYoloNode(Node):
 def main(args=None):
     import argparse
     parser = argparse.ArgumentParser(
-        description="OMX YOLO ROS 2 node with state machine + fire")
+        description="OMX YOLO ROS 2 node with priority queue + fire + target_lost")
     parser.add_argument("--dry-run", action="store_true",
                         help="OMX 없이 카메라 + 검출만")
     cli_args, ros_args = parser.parse_known_args()
