@@ -29,10 +29,10 @@ calibration:
   # 각 joint 가 0 rad 일 때의 raw tick.
   # `--measure-home` 모드로 측정한 값을 여기 박아넣으세요.
   home:
-    shoulder_pan:  2075
-    shoulder_lift: 1257
-    elbow_flex:    2749
-    wrist_flex:    1692
+    shoulder_pan:  2048
+    shoulder_lift: 1038
+    elbow_flex:    3033
+    wrist_flex:    1500
     wrist_roll:    2024
     gripper:       3217
 
