@@ -30,9 +30,9 @@ calibration:
   # `--measure-home` 모드로 측정한 값을 여기 박아넣으세요.
   home:
     shoulder_pan:  2048
-    shoulder_lift: 1038
-    elbow_flex:    3033
-    wrist_flex:    1500
+    shoulder_lift: 1100
+    elbow_flex:    2700
+    wrist_flex:    1760
     wrist_roll:    2024
     gripper:       3217
 
@@ -125,14 +125,12 @@ autotrack:
 # 정찰 + 우선순위 큐
 # ===========================================================
 patrol:
-  # SCANNING 상태에서 표적 안 보일 때 기다리는 시간
-  # 이 시간 안에 검출 안 되면 다음 좌표로
   scan_timeout_sec: 2.0
-  
-  # 큐 최대 크기 (넘으면 오래된 LOW 우선 제거)
   max_queue_size: 20
-  
-  # 중복 좌표 무시 거리 (미터)
-  # 큐에 이미 비슷한 좌표 있으면 추가 안 함
-  # 처리 직후의 last_processed 와도 비교
   duplicate_threshold_m: 0.3
+  los_check_enabled: true
+  los_cost_threshold: 80
+  costmap_topic: "/global_costmap/costmap"
+  
+  publish_queue_markers: true
+  marker_lifetime_sec: 2.0

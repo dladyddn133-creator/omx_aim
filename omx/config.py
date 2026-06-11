@@ -79,6 +79,7 @@ class FireConfig:
     cooldown_sec: float
     lost_timeout_sec: float = 1.5
 
+
 @dataclass
 class AutoTrackConfig:
     default_armed: bool
@@ -87,10 +88,17 @@ class AutoTrackConfig:
 
 @dataclass
 class PatrolConfig:
-    """정찰 + 우선순위 큐."""
+    """정찰 + 우선순위 큐 + LOS + 시각화."""
     scan_timeout_sec: float
     max_queue_size: int
     duplicate_threshold_m: float
+    # LOS (단계 F)
+    los_check_enabled: bool = True
+    los_cost_threshold: int = 80
+    costmap_topic: str = "/global_costmap/costmap"
+    # 시각화 (단계 G)
+    publish_queue_markers: bool = True
+    marker_lifetime_sec: float = 2.0
 
 
 @dataclass
@@ -106,7 +114,7 @@ class Config:
     patrol: PatrolConfig | None = None
 
 
-def find_config_path(path: str | None = None) -> Path:
+def find_config_path(path=None):
     if path is not None:
         p = Path(path)
         if not p.is_file():
