@@ -41,7 +41,7 @@ def aim_angles(x: float, y: float, z: float) -> dict[str, float]:
         "shoulder_lift": pitch,
         "elbow_flex":    0.0,
         "wrist_flex":    0.0,
-        "wrist_roll":    0.0,
+        # "wrist_roll":    0.0,
     }
 
 

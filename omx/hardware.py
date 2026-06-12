@@ -22,19 +22,19 @@ MOTOR_ORDER = (
     "shoulder_lift",
     "elbow_flex",
     "wrist_flex",
-    "wrist_roll",
-    "gripper",
+    # "wrist_roll",
+    # "gripper",
 )
 ARM_MOTORS = MOTOR_ORDER[:-1]
-GRIPPER_MOTOR = MOTOR_ORDER[-1]
+# GRIPPER_MOTOR = MOTOR_ORDER[-1]
 
 MOTOR_SPEC = {
     "shoulder_pan":  (11, "xl430-w250"),
     "shoulder_lift": (12, "xl430-w250"),
     "elbow_flex":    (13, "xl430-w250"),
     "wrist_flex":    (14, "xl330-m288"),
-    "wrist_roll":    (15, "xl330-m288"),
-    "gripper":       (16, "xl330-m288"),
+    # "wrist_roll":    (15, "xl330-m288"),
+    # "gripper":       (16, "xl330-m288"),
 }
 
 

@@ -274,9 +274,9 @@ class OmxController:
                 self.bus.write("Operating_Mode", m,
                                OperatingMode.EXTENDED_POSITION.value,
                                normalize=False)
-            self.bus.write("Operating_Mode", "gripper",
-                           OperatingMode.CURRENT_POSITION.value,
-                           normalize=False)
+            # self.bus.write("Operating_Mode", "gripper",
+            #                OperatingMode.CURRENT_POSITION.value,
+            #                normalize=False)
             for m in MOTOR_ORDER:
                 self.bus.write("Profile_Velocity", m,
                                self.cfg.motor.profile_velocity, normalize=False)
@@ -329,7 +329,7 @@ class OmxController:
                                  + sign["shoulder_pan"] * new_yaw * RAD2TICK))
             pitch_tick = int(round(home["shoulder_lift"]
                                    + sign["shoulder_lift"] * new_pitch * RAD2TICK))
-            for m in ("elbow_flex", "wrist_flex", "wrist_roll"):
+            for m in ("elbow_flex", "wrist_flex"):
                 self.bus.write("Goal_Position", m, home[m], normalize=False)
             self.bus.write("Goal_Position", "shoulder_pan",
                            yaw_tick, normalize=False)
@@ -381,19 +381,19 @@ class OmxController:
         return True
 
     def fire(self):
-        if self.dry_run:
-            self._log("[dry-run] 격발 시뮬레이션")
-            time.sleep(self.cfg.fire.gripper_close_duration)
-            time.sleep(self.cfg.fire.gripper_open_duration)
-            return
+        # if self.dry_run:
+        #     self._log("[dry-run] 격발 시뮬레이션")
+        #     time.sleep(self.cfg.fire.gripper_close_duration)
+        #     time.sleep(self.cfg.fire.gripper_open_duration)
+        #     return
 
-        self.bus.write("Goal_Position", "gripper",
-                       self.cfg.fire.gripper_close_pos, normalize=False)
-        time.sleep(self.cfg.fire.gripper_close_duration)
+        # self.bus.write("Goal_Position", "gripper",
+        #                self.cfg.fire.gripper_close_pos, normalize=False)
+        # time.sleep(self.cfg.fire.gripper_close_duration)
 
-        self.bus.write("Goal_Position", "gripper",
-                       self.cfg.fire.gripper_open_pos, normalize=False)
-        time.sleep(self.cfg.fire.gripper_open_duration)
+        # self.bus.write("Goal_Position", "gripper",
+        #                self.cfg.fire.gripper_open_pos, normalize=False)
+        # time.sleep(self.cfg.fire.gripper_open_duration)
 
         self._log("격발 완료")
 
@@ -404,8 +404,8 @@ class OmxController:
                 "shoulder_lift": self.pitch,
                 "elbow_flex": 0.0,
                 "wrist_flex": 0.0,
-                "wrist_roll": 0.0,
-                "gripper": 0.0,
+                # "wrist_roll": 0.0,
+                # "gripper": 0.0,
             }
         ticks = self.bus.sync_read("Present_Position", normalize=False)
         home = self.cfg.calibration.home

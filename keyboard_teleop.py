@@ -34,10 +34,10 @@ KEY_BINDINGS = {
     "e": ("elbow_flex", -1),
     "4": ("wrist_flex", +1),
     "r": ("wrist_flex", -1),
-    "5": ("wrist_roll", +1),
-    "t": ("wrist_roll", -1),
-    "o": ("gripper", +1),
-    "p": ("gripper", -1),
+    # "5": ("wrist_roll", +1),
+    # "t": ("wrist_roll", -1),
+    # "o": ("gripper", +1),
+    # "p": ("gripper", -1),
 }
 
 
