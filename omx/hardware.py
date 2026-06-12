@@ -56,7 +56,6 @@ def build_bus(port: str = DEFAULT_PORT) -> DynamixelMotorsBus:
     motors = {}
     for name in MOTOR_ORDER:
         motor_id, model = MOTOR_SPEC[name]
-        norm = (MotorNormMode.RANGE_0_100 if name == GRIPPER_MOTOR
-                else MotorNormMode.RANGE_M100_100)
-        motors[name] = Motor(motor_id, model, norm)
+        # gripper 떼어냄 → 모든 모터 RANGE_M100_100 통일
+        motors[name] = Motor(motor_id, model, MotorNormMode.RANGE_M100_100)
     return DynamixelMotorsBus(port=port, motors=motors)
