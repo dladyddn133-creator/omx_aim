@@ -19,7 +19,7 @@ from omx.hardware import (
     build_bus,
     get_dxl_symbols,
     ARM_MOTORS,
-    GRIPPER_MOTOR,
+    # GRIPPER_MOTOR,
 )
 from omx.config import load_config, Config
 
