@@ -72,13 +72,13 @@ class KeyboardTeleop:
 
             self.bus.write(
                 "Operating_Mode",
-                GRIPPER_MOTOR,
+                # GRIPPER_MOTOR,
                 OperatingMode.CURRENT_POSITION.value,
                 normalize=False,
             )
 
-            self.bus.write("Drive_Mode", GRIPPER_MOTOR,
-                           DriveMode.NON_INVERTED.value, normalize=False)
+            # self.bus.write("Drive_Mode", GRIPPER_MOTOR,
+            #                DriveMode.NON_INVERTED.value, normalize=False)
 
             self.bus.write("Position_P_Gain", "elbow_flex",
                            self.cfg.motor.elbow_p_gain, normalize=False)
@@ -114,8 +114,8 @@ class KeyboardTeleop:
         return max(min(value, max_limit), min_limit)
 
     def _send_command(self, motor: str, direction: int) -> None:
-        step = self.gripper_step if motor == GRIPPER_MOTOR else self.arm_step
-        target = self.positions[motor] + direction * step
+        # step = self.gripper_step if motor == GRIPPER_MOTOR else self.arm_step
+        target = self.positions[motor] + direction * self.arm_step
         target = self._clamp(motor, target)
 
         self.bus.write("Goal_Position", motor, target, normalize=False)

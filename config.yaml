@@ -30,8 +30,8 @@ calibration:
   # `--measure-home` 모드로 측정한 값을 여기 박아넣으세요.
   home:
     shoulder_pan:  2048
-    shoulder_lift: 1100
-    elbow_flex:    2700
+    shoulder_lift: 1055
+    elbow_flex:    3050
     wrist_flex:    1760
     # wrist_roll:    2024
     # gripper:       3217
@@ -51,8 +51,8 @@ calibration:
 safety:
   # 관절별 안전 각도 범위 (도 단위). IK 결과가 이 범위 밖이면 clamp.
   angle_limits_deg:
-    shoulder_pan:  [-110,  110]
-    shoulder_lift: [-60,  60]
+    shoulder_pan:  [-180,  180]
+    shoulder_lift: [-30,  300]
     elbow_flex:    [-90,  90]
     wrist_flex:    [-90,  90]
     wrist_roll:    [-180, 180]
@@ -98,7 +98,7 @@ fire:
   # 격발 직전 확인 (CONFIRMING 상태)
   hold_time_sec: 0.5            # deadband 안 유지 시간
   confirm_deadband_scale: 1.0   # IBVS deadband 의 N배 (1.0 = 같음, 더 좁게 하려면 0.5)
-  
+  aim_settle_sec: 0.7
   # 격발 동작 (gripper 시뮬레이션)
   gripper_close_pos: 1000       # 격발 시 gripper raw tick
   gripper_open_pos: 3217        # 격발 후 위치 (보통 home 값)
@@ -106,7 +106,7 @@ fire:
   gripper_open_duration: 0.3    # 열기 동작 시간
   
   # 격발 후 cooldown
-  cooldown_sec: 5.0             # 격발 후 home + 대기
+  cooldown_sec: 1.5             # 격발 후 home + 대기
   lost_timeout_sec: 1.5
 # ===========================================================
 # Auto-track (자율 검출)
@@ -134,3 +134,38 @@ patrol:
   
   publish_queue_markers: true
   marker_lifetime_sec: 2.0
+
+# ===========================================================
+# 와플 (Nav2 클라이언트)
+# ===========================================================
+waffle:
+  frame: "map"
+  nav_action_name: "/navigate_to_pose"
+  # H2 부터 사용 예정 (지금은 빈자리)
+  # stand_off_distance: 1.0
+  # omx_timeout_sec: 30.0
+
+# ===========================================================
+# CHECK_VIEW 판정 + VIEW_POSE v1 계산 (H2)
+# ===========================================================
+view_pose:
+  omx_yaw_limit_deg: 180.0
+  min_distance_m: 0.3
+  max_distance_m: 3.0
+  stand_off_distance: 1.0
+
+# ===========================================================
+# BOUNDARY 자동 생성 (H4 에서 활성화 예정)
+# ===========================================================
+boundary:
+  enable_during_target: false    # 런타임 토픽으로 토글 가능
+  enable_during_patrol: true
+  
+  fan_half_angle_deg: 45.0       # ± 이 각도 (좌우 합 90° fan)
+  angle_step_deg: 22.5
+  distance_m: 1.5
+  z: 0.3
+  
+  period_sec: 1.0                # sweep 한 칸씩 진행
+  max_queue_size: 10
+  ttl_sec: 10.0

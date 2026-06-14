@@ -78,7 +78,7 @@ class FireConfig:
     gripper_open_duration: float
     cooldown_sec: float
     lost_timeout_sec: float = 1.5
-
+    aim_settle_sec: float = 0.7
 
 @dataclass
 class AutoTrackConfig:
@@ -100,6 +100,34 @@ class PatrolConfig:
     publish_queue_markers: bool = True
     marker_lifetime_sec: float = 2.0
 
+@dataclass
+class ViewPoseConfig:
+    """CHECK_VIEW 판정 + VIEW_POSE v1 (H2)."""
+    omx_yaw_limit_deg: float = 180.0
+    min_distance_m: float = 0.3
+    max_distance_m: float = 3.0
+    stand_off_distance: float = 1.0
+
+
+@dataclass
+class BoundaryConfig:
+    """BOUNDARY 자동 생성 (H4 예정)."""
+    enable_during_target: bool = False
+    enable_during_patrol: bool = True
+    fan_half_angle_deg: float = 45.0
+    angle_step_deg: float = 22.5
+    distance_m: float = 1.5
+    z: float = 0.3
+    period_sec: float = 1.0
+    max_queue_size: int = 10
+    ttl_sec: float = 10.0
+
+@dataclass
+class WaffleConfig:
+    """와플 Nav2 클라이언트 설정."""
+    frame: str = "map"
+    nav_action_name: str = "/navigate_to_pose"
+
 
 @dataclass
 class Config:
@@ -112,7 +140,9 @@ class Config:
     fire: FireConfig | None = None
     autotrack: AutoTrackConfig | None = None
     patrol: PatrolConfig | None = None
-
+    waffle: WaffleConfig | None = None
+    view_pose: ViewPoseConfig | None = None
+    boundary: BoundaryConfig | None = None
 
 def find_config_path(path=None):
     if path is not None:
@@ -155,7 +185,9 @@ def load_config(path=None):
         fire_cfg = FireConfig(**raw["fire"]) if "fire" in raw else None
         autotrack_cfg = AutoTrackConfig(**raw["autotrack"]) if "autotrack" in raw else None
         patrol_cfg = PatrolConfig(**raw["patrol"]) if "patrol" in raw else None
-
+        waffle_cfg = WaffleConfig(**raw["waffle"]) if "waffle" in raw else None
+        view_pose_cfg = ViewPoseConfig(**raw["view_pose"]) if "view_pose" in raw else None
+        boundary_cfg = BoundaryConfig(**raw["boundary"]) if "boundary" in raw else None
         cfg = Config(
             motor=MotorConfig(**raw["motor"]),
             calibration=CalibrationConfig(**raw["calibration"]),
@@ -170,6 +202,9 @@ def load_config(path=None):
             fire=fire_cfg,
             autotrack=autotrack_cfg,
             patrol=patrol_cfg,
+            waffle=waffle_cfg,  
+            view_pose=view_pose_cfg,
+            boundary=boundary_cfg,
         )
     except (KeyError, TypeError) as e:
         raise ValueError(

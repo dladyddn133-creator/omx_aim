@@ -17,7 +17,7 @@ from omx.hardware import (
     build_bus,
     get_dxl_symbols,
     ARM_MOTORS,
-    GRIPPER_MOTOR,
+    # GRIPPER_MOTOR,
     MOTOR_ORDER,
 )
 from omx.config import load_config, Config
@@ -110,14 +110,14 @@ class AimController:
                     "Operating_Mode", motor,
                     OperatingMode.EXTENDED_POSITION.value, normalize=False,
                 )
-            self.bus.write(
-                "Operating_Mode", GRIPPER_MOTOR,
-                OperatingMode.CURRENT_POSITION.value, normalize=False,
-            )
-            self.bus.write(
-                "Drive_Mode", GRIPPER_MOTOR,
-                DriveMode.NON_INVERTED.value, normalize=False,
-            )
+            # self.bus.write(
+            #     "Operating_Mode", GRIPPER_MOTOR,
+            #     OperatingMode.CURRENT_POSITION.value, normalize=False,
+            # )
+            # self.bus.write(
+            #     "Drive_Mode", GRIPPER_MOTOR,
+            #     DriveMode.NON_INVERTED.value, normalize=False,
+            # )
 
             self.bus.write("Position_P_Gain", "elbow_flex",
                            self.cfg.motor.elbow_p_gain, normalize=False)
