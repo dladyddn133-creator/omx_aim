@@ -456,6 +456,8 @@ class StateMachine:
 
         # H2: nav_result 비동기 처리
         self.nav_pending_result: Optional[str] = None
+        # H3: preempt cancel 결과 무시용 flag
+        self.pending_cancel_for_preempt: bool = False
 
         # 타이머/플래그
         self.aim_start_t: float = 0.0      # H2.1: AIMING 진입 시각
@@ -475,6 +477,7 @@ class StateMachine:
         self.waffle_pos_fn = None             # () -> (x, y) or None
         self.check_view_fn = None             # H2: (coord_map) -> bool
         self.compute_view_pose_fn = None      # H2: (coord_map) -> (x,y,yaw) or None
+        self.nav_cancel_fn = None             # H3: () -> publish /omx/nav_cancel
 
     def _log(self, msg):
         if self.logger:
@@ -538,28 +541,36 @@ class StateMachine:
         return True
 
     def _is_duplicate(self, coord, target_type) -> bool:
+        """같은 type 끼리만 중복 비교 (H3.1: PATROL → TARGET 업그레이드 허용)."""
         if not self.cfg.patrol:
             return False
         threshold = self.cfg.patrol.duplicate_threshold_m
 
-        # BOUNDARY 는 다른 큐와 비교 안 함 (단명적)
-        check_queues = ([self.boundary_queue]
-                        if target_type == TargetType.BOUNDARY
-                        else [self.main_queue])
-
-        if self.last_processed and target_type != TargetType.BOUNDARY:
-            if self._distance(coord, self.last_processed) < threshold:
-                return True
-
-        for q in check_queues:
-            for entry in q:
+        # BOUNDARY 는 BOUNDARY 끼리만 비교
+        if target_type == TargetType.BOUNDARY:
+            for entry in self.boundary_queue:
                 if self._distance(coord, entry.coord_map) < threshold:
                     return True
+            return False
 
-        if (self.current_parent
-                and target_type != TargetType.BOUNDARY):
-            if self._distance(coord, self.current_parent.coord_map) < threshold:
+        # PATROL/TARGET 처리
+        # last_processed 와 비교: PATROL 만 (TARGET 은 외부 신뢰 신호로 재처리 허용)
+        if (target_type == TargetType.PATROL
+                and self.last_processed
+                and self._distance(coord, self.last_processed) < threshold):
+            return True
+
+        # main_queue 와 same-type 비교
+        for entry in self.main_queue:
+            if (entry.target_type == target_type
+                    and self._distance(coord, entry.coord_map) < threshold):
                 return True
+
+        # current_parent 와 same-type 비교
+        if (self.current_parent is not None
+                and self.current_parent.target_type == target_type
+                and self._distance(coord, self.current_parent.coord_map) < threshold):
+            return True
 
         return False
 
@@ -633,7 +644,37 @@ class StateMachine:
     # ----- 입력 핸들러 -----
 
     def on_target(self, coord) -> bool:
-        return self.add_target(coord, TargetType.TARGET)
+        # H3.1: 1) main_queue 에 같은 위치 PATROL 이 있으면 제거 (업그레이드)
+        self._upgrade_patrol_in_queue_to_target(coord)
+        # 2) TARGET 큐 추가
+        accepted = self.add_target(coord, TargetType.TARGET)
+        if accepted:
+            # 3) current_parent 가 PATROL 이면 같은/다른 위치 분기 처리
+            self._maybe_preempt_for_target(coord)
+        return accepted
+
+    def _upgrade_patrol_in_queue_to_target(self, target_coord):
+        """main_queue 의 같은 위치 PATROL 항목 제거 (TARGET 으로 대체될 예정).
+        
+        current_parent 의 PATROL 은 _maybe_preempt_for_target 에서 처리.
+        """
+        if not self.cfg.patrol:
+            return
+        threshold = self.cfg.patrol.duplicate_threshold_m
+
+        new_queue = []
+        removed = 0
+        for entry in self.main_queue:
+            if (entry.target_type == TargetType.PATROL
+                    and self._distance(entry.coord_map, target_coord) < threshold):
+                removed += 1
+                self._log(f"PATROL → TARGET 업그레이드 (큐): "
+                          f"{entry.coord_map} 제거")
+            else:
+                new_queue.append(entry)
+        if removed > 0:
+            self.main_queue = new_queue
+            heapq.heapify(self.main_queue)
 
     def on_boundary(self, coord, parent_id=None) -> bool:
         return self.add_target(coord, TargetType.BOUNDARY, parent_id=parent_id)
@@ -645,6 +686,84 @@ class StateMachine:
         """waffle_node 의 nav_result 비동기 수신. 다음 tick 에서 처리."""
         self.nav_pending_result = result
         self._log(f"nav_result 받음: {result}")
+
+    # ----- H3: TARGET preempt -----
+
+    def _preempt_ok(self) -> bool:
+        """현재 상황에서 preempt 가능?
+        
+        조건:
+            - current_parent 가 PATROL
+            - state 가 WAITING_NAV / AIMING / SCANNING 중 하나
+              (TRACKING/CONFIRMING/FIRING/COOLDOWN 은 끝까지 처리)
+        """
+        if self.current_parent is None:
+            return False
+        if self.current_parent.target_type != TargetType.PATROL:
+            return False
+        if self.state not in (State.WAITING_NAV,
+                              State.AIMING,
+                              State.SCANNING):
+            return False
+        return True
+
+    def _is_waffle_navigating(self) -> bool:
+        """waffle 이 현재 Nav2 로 이동 중인가?"""
+        if self.state == State.WAITING_NAV:
+            return True
+        # boundary 처리 중 (WAITING_NAV 의 임시 transient)
+        if self.state in (State.AIMING, State.SCANNING):
+            if (self.current_focus is not None
+                    and self.current_focus.target_type == TargetType.BOUNDARY):
+                return True
+        return False
+
+    def _maybe_preempt_for_target(self, target_coord):
+        """방금 TARGET 이 추가되었을 때 PATROL preempt 시도 (H3.1).
+        
+        같은 위치: PATROL 폐기 (업그레이드)
+        다른 위치: PATROL 큐 복귀 (priority 로 자동 재정렬)
+        """
+        if not self._preempt_ok():
+            return
+
+        threshold = (self.cfg.patrol.duplicate_threshold_m
+                     if self.cfg.patrol else 0.3)
+        parent_coord = self.current_parent.coord_map
+        same_location = (self._distance(parent_coord, target_coord) < threshold)
+
+        loc_tag = "same" if same_location else "different"
+        self._log(f"=== TARGET preempt 발동 "
+                  f"(state={self.state.value}, "
+                  f"parent_loc={loc_tag}) ===")
+
+        # 와플 이동 중이면 cancel 요청
+        if self._is_waffle_navigating():
+            if self.nav_cancel_fn:
+                self.nav_cancel_fn()
+                self.pending_cancel_for_preempt = True
+                self._log("nav_cancel 발송")
+
+        # PATROL 처리 분기
+        if same_location:
+            # 같은 위치 → 업그레이드 (PATROL 폐기)
+            self._log(f"PATROL → TARGET 업그레이드: {parent_coord} 폐기")
+            self.current_parent = None
+        else:
+            # 다른 위치 → PATROL 큐 복귀 (priority 로 다시 정렬됨)
+            patrol_entry = self.current_parent
+            self.current_parent = None
+            # heapq push (priority, distance, count 로 자동 정렬)
+            heapq.heappush(self.main_queue, patrol_entry)
+            self._log(f"PATROL 큐 복귀: {patrol_entry.coord_map} "
+                      f"(TARGET 처리 후 자동 재처리)")
+
+        # 공통 정리
+        self.current_focus = None
+        self.boundary_queue.clear()
+        self.confirm_progress = 0.0
+        self.lost_start_t = 0.0
+        self.transition(State.IDLE)
 
     def on_abort(self):
         self._log("ABORT - IDLE + 모든 큐 비움")
@@ -658,6 +777,7 @@ class StateMachine:
         self.patrol_complete_sent = True
         self.lost_start_t = 0.0
         self.nav_pending_result = None
+        self.pending_cancel_for_preempt = False    # H3.2
 
     def on_arm_enable(self, armed: bool):
         self.armed = armed
@@ -677,16 +797,22 @@ class StateMachine:
             'blocked_entries': [],
             'nav_goal_xyyaw': None,         # H2: (x, y, yaw) for /omx/nav_goal
             'focus_is_boundary': False,     # H2: 시각화용
+            'target_not_found_coord': None, # H3
         }
 
-        # 1. nav_result 처리 (H2.1: WAITING_NAV state 일 때만 즉시 적용.
-        #    boundary 처리 중 (state=AIMING/SCANNING/...) 이면 큐에 남겨두고,
-        #    _on_focus_done 으로 WAITING_NAV 복귀 후 다음 tick 에서 처리.)
-        if (self.nav_pending_result is not None
-                and self.state == State.WAITING_NAV):
-            result = self.nav_pending_result
-            self.nav_pending_result = None
-            self._handle_nav_result(result, action, now)
+        # 1. nav_result 처리
+        #    - H3: preempt cancel 결과는 state 무관하게 무시 (이미 TARGET 처리 중)
+        #    - H2.1: 그 외엔 WAITING_NAV state 일 때만 적용
+        if self.nav_pending_result is not None:
+            if self.pending_cancel_for_preempt:
+                self._log(f"preempt cancel 결과 ({self.nav_pending_result}) "
+                          f"무시 - TARGET 처리 계속")
+                self.nav_pending_result = None
+                self.pending_cancel_for_preempt = False
+            elif self.state == State.WAITING_NAV:
+                result = self.nav_pending_result
+                self.nav_pending_result = None
+                self._handle_nav_result(result, action, now)
 
         # 2. State 분기
         if self.state == State.IDLE:
@@ -854,15 +980,31 @@ class StateMachine:
 
     # ----- 핸들러: SCANNING / TRACKING / CONFIRMING / COOLDOWN -----
 
+    def _scan_timeout(self) -> float:
+        """현재 focus 의 type 별 scan timeout. H3."""
+        if (self.cfg.patrol is not None
+                and self.current_focus is not None
+                and self.current_focus.target_type == TargetType.TARGET):
+            return self.cfg.patrol.target_scan_timeout_sec
+        return (self.cfg.patrol.scan_timeout_sec
+                if self.cfg.patrol else 2.0)
+
     def _on_scanning(self, detected, now, action):
         if detected:
             self.lost_start_t = 0.0
             self.transition(State.TRACKING)
         else:
-            scan_timeout = (self.cfg.patrol.scan_timeout_sec
-                            if self.cfg.patrol else 2.0)
+            scan_timeout = self._scan_timeout()
             if now - self.scan_start_t >= scan_timeout:
-                self._log(f"SCANNING {scan_timeout}s 끝, 표적 없음")
+                # H3: TARGET miss 알림
+                if (self.current_focus is not None
+                        and self.current_focus.target_type == TargetType.TARGET):
+                    action['target_not_found_coord'] = (
+                        self.current_focus.coord_map)
+                    self._log(f"TARGET miss ({scan_timeout:.1f}s scan) "
+                              f"-> target_not_found 발행")
+                else:
+                    self._log(f"SCANNING {scan_timeout:.1f}s 끝, 표적 없음")
                 self._on_focus_done()
 
     def _on_tracking(self, detected, error_norm, now, action):
@@ -1014,6 +1156,7 @@ class OmxYoloNode(Node):
         self.sm.waffle_pos_fn = self.get_waffle_xy
         self.sm.check_view_fn = self.check_view              # H2
         self.sm.compute_view_pose_fn = self.compute_view_pose  # H2
+        self.sm.nav_cancel_fn = self.publish_nav_cancel        # H3
 
         self.ctrl.connect()
         self.ctrl.go_home()
@@ -1043,6 +1186,11 @@ class OmxYoloNode(Node):
         # H2 신규
         self.pub_nav_goal = self.create_publisher(
             PoseStamped, '/omx/nav_goal', 10)
+        # H3 신규
+        self.pub_nav_cancel = self.create_publisher(
+            Empty, '/omx/nav_cancel', 10)
+        self.pub_target_not_found = self.create_publisher(
+            PointStamped, '/omx/target_not_found', 10)
 
         # Subscribers
         self.create_subscription(String, '/omx/control_mode',
@@ -1406,6 +1554,24 @@ class OmxYoloNode(Node):
         self.get_logger().info(
             f"[nav_goal] 발행: ({x:+.2f}, {y:+.2f}) "
             f"yaw={math.degrees(yaw):+.1f}°")
+        # H3.2: 새 nav 시작 → 옛 nav_result 폐기 (race 방지)
+        if self.sm.nav_pending_result is not None:
+            self.get_logger().warn(
+                f"이전 nav_result ({self.sm.nav_pending_result}) 폐기 "
+                f"- 새 nav 시작")
+            self.sm.nav_pending_result = None
+
+    def publish_nav_cancel(self):
+        """H3: TARGET preempt 시 진행 중 Nav2 cancel 요청."""
+        self.pub_nav_cancel.publish(Empty())
+        self.get_logger().info("[nav_cancel] 발행 (preempt)")
+
+    def publish_target_not_found(self, coord_map):
+        """H3: TARGET 좌표에서 scan_timeout 안에 표적 못 찾음."""
+        if coord_map is None:
+            return
+        self.pub_target_not_found.publish(self._make_point_stamped(coord_map))
+        self.get_logger().info(f"[target_not_found] 발행: {coord_map}")
 
     def publish_queue_markers(self):
         if not self.cfg.patrol.publish_queue_markers:
@@ -1546,6 +1712,10 @@ class OmxYoloNode(Node):
 
         if action.get('patrol_complete', False):
             self.publish_patrol_complete()
+
+        # H3: TARGET miss 알림
+        if action.get('target_not_found_coord') is not None:
+            self.publish_target_not_found(action['target_not_found_coord'])
 
         self.publish_detected(detected)
         if error_norm is not None:

@@ -99,6 +99,7 @@ class PatrolConfig:
     # 시각화 (단계 G)
     publish_queue_markers: bool = True
     marker_lifetime_sec: float = 2.0
+    target_scan_timeout_sec: float = 5.0
 
 @dataclass
 class ViewPoseConfig:
