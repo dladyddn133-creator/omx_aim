@@ -32,7 +32,7 @@ calibration:
     shoulder_pan:  2048
     shoulder_lift: 1055
     elbow_flex:    3050
-    wrist_flex:    1760
+    wrist_flex:    2048
     # wrist_roll:    2024
     # gripper:       3217
 
@@ -52,7 +52,7 @@ safety:
   # 관절별 안전 각도 범위 (도 단위). IK 결과가 이 범위 밖이면 clamp.
   angle_limits_deg:
     shoulder_pan:  [-180,  180]
-    shoulder_lift: [-30,  300]
+    shoulder_lift: [-30,  30]
     elbow_flex:    [-90,  90]
     wrist_flex:    [-90,  90]
     wrist_roll:    [-180, 180]
