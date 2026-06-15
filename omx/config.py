@@ -100,7 +100,8 @@ class PatrolConfig:
     publish_queue_markers: bool = True
     marker_lifetime_sec: float = 2.0
     target_scan_timeout_sec: float = 5.0
-
+    boundary_scan_timeout_sec: float = 1.0
+    
 @dataclass
 class ViewPoseConfig:
     """CHECK_VIEW 판정 + VIEW_POSE v1 (H2)."""

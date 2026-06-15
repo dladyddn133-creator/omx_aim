@@ -127,6 +127,7 @@ autotrack:
 patrol:
   scan_timeout_sec: 2.0
   target_scan_timeout_sec: 5.0
+  boundary_scan_timeout_sec: 1.0
   max_queue_size: 20
   duplicate_threshold_m: 0.3
   los_check_enabled: true
@@ -165,8 +166,8 @@ boundary:
   fan_half_angle_deg: 45.0       # ± 이 각도 (좌우 합 90° fan)
   angle_step_deg: 22.5
   distance_m: 1.5
-  z: 0.3
-  
+  z: 0.18
+  period_sec: 2.0
   period_sec: 1.0                # sweep 한 칸씩 진행
   max_queue_size: 10
   ttl_sec: 10.0

@@ -437,6 +437,102 @@ class OmxController:
 
 
 # ===========================================================
+# BoundaryGenerator (H4: 사주 경계 sweep 자동 생성)
+# ===========================================================
+
+class BoundaryGenerator:
+    """와플 이동 중 사주 경계 BOUNDARY 좌표를 sweep 방식으로 생성.
+    
+    Sweep 동작:
+        fan_half_angle=45, angle_step=22.5 → [-45, -22.5, 0, 22.5, 45]
+        매 period_sec 마다 한 각도씩 순회하며 1개 생성.
+    
+    좌표 계산 (map frame):
+        absolute_angle = waffle.yaw + sweep_offset
+        x = waffle.x + distance_m * cos(absolute)
+        y = waffle.y + distance_m * sin(absolute)
+        z = boundary.z
+    
+    parent_type 별 enable 분리:
+        - PATROL 처리 중에만 (기본): 탐색 의미
+        - TARGET 처리 중에는 (기본 off): TARGET 으로 빠르게
+        - /omx/boundary_enable 토픽으로 런타임 토글 가능
+    """
+
+    def __init__(self, cfg, waffle_pose_fn, logger=None):
+        """
+        Args:
+            cfg: BoundaryConfig
+            waffle_pose_fn: () -> (x, y, yaw) or None (map frame)
+            logger: ROS logger
+        """
+        self.cfg = cfg
+        self.waffle_pose_fn = waffle_pose_fn
+        self.logger = logger
+
+        # parent type 별 토글
+        self.enabled_target = cfg.enable_during_target
+        self.enabled_patrol = cfg.enable_during_patrol
+
+        # sweep 각도 리스트 (한 번 계산 후 고정)
+        half = cfg.fan_half_angle_deg
+        step = cfg.angle_step_deg
+        self.sweep_angles_deg = []
+        a = -half
+        while a <= half + 0.01:
+            self.sweep_angles_deg.append(a)
+            a += step
+        self.sweep_idx = 0
+        self.last_gen_t = 0.0
+
+    def _log(self, msg):
+        if self.logger:
+            self.logger.info(msg)
+
+    def set_enabled(self, target=None, patrol=None):
+        """런타임 토글."""
+        if target is not None:
+            self.enabled_target = target
+        if patrol is not None:
+            self.enabled_patrol = patrol
+
+    def is_enabled_for(self, parent_type) -> bool:
+        if parent_type == TargetType.TARGET:
+            return self.enabled_target
+        elif parent_type == TargetType.PATROL:
+            return self.enabled_patrol
+        return False
+
+    def maybe_generate(self, now: float, parent_type):
+        """주기 시간 됐고 enabled 면 다음 BOUNDARY 좌표 반환.
+        
+        Returns: (x, y, z) in map frame, 또는 None.
+        """
+        if not self.is_enabled_for(parent_type):
+            return None
+        if now - self.last_gen_t < self.cfg.period_sec:
+            return None
+
+        pose = self.waffle_pose_fn()
+        if pose is None:
+            return None
+        wx, wy, wyaw = pose
+
+        # sweep 한 칸 진행
+        offset_deg = self.sweep_angles_deg[self.sweep_idx]
+        self.sweep_idx = (self.sweep_idx + 1) % len(self.sweep_angles_deg)
+
+        absolute_angle = wyaw + math.radians(offset_deg)
+        d = self.cfg.distance_m
+        bx = wx + d * math.cos(absolute_angle)
+        by = wy + d * math.sin(absolute_angle)
+        bz = self.cfg.z
+
+        self.last_gen_t = now
+        return (bx, by, bz)
+
+
+# ===========================================================
 # StateMachine (H2 큐 분리 + WAITING_NAV)
 # ===========================================================
 
@@ -590,7 +686,10 @@ class StateMachine:
         return True
 
     def _pop_with_los(self, queue, waffle_xy=None):
-        """LOS 검사 통과한 entry pop. 거리 기반 재정렬 후."""
+        """LOS 검사 통과한 entry pop. 거리 기반 재정렬 후.
+        
+        H4: BOUNDARY 는 TTL 도 검사 (오래된 좌표는 와플 위치 달라져 의미 없음).
+        """
         blocked_entries = []
 
         if waffle_xy is not None:
@@ -598,8 +697,21 @@ class StateMachine:
                 entry.update_distance(waffle_xy)
             heapq.heapify(queue)
 
+        # H4: BOUNDARY TTL 설정
+        now_t = time.time()
+        ttl = (self.cfg.boundary.ttl_sec
+               if self.cfg.boundary else 10.0)
+
         while queue:
             entry = heapq.heappop(queue)
+
+            # H4: BOUNDARY TTL 검사
+            if entry.target_type == TargetType.BOUNDARY:
+                age = now_t - entry.arrival_time
+                if age > ttl:
+                    self._log(f"BOUNDARY TTL 초과 ({age:.1f}s > {ttl:.1f}s) "
+                              f"폐기: {entry.coord_map}")
+                    continue  # 다음 entry
 
             if (not self.cfg.patrol
                     or not self.cfg.patrol.los_check_enabled
@@ -981,13 +1093,17 @@ class StateMachine:
     # ----- 핸들러: SCANNING / TRACKING / CONFIRMING / COOLDOWN -----
 
     def _scan_timeout(self) -> float:
-        """현재 focus 의 type 별 scan timeout. H3."""
-        if (self.cfg.patrol is not None
-                and self.current_focus is not None
-                and self.current_focus.target_type == TargetType.TARGET):
+        """현재 focus 의 type 별 scan timeout. H3 + H4."""
+        if self.cfg.patrol is None or self.current_focus is None:
+            return self.cfg.patrol.scan_timeout_sec if self.cfg.patrol else 2.0
+
+        t = self.current_focus.target_type
+        if t == TargetType.TARGET:
             return self.cfg.patrol.target_scan_timeout_sec
-        return (self.cfg.patrol.scan_timeout_sec
-                if self.cfg.patrol else 2.0)
+        elif t == TargetType.BOUNDARY:
+            return self.cfg.patrol.boundary_scan_timeout_sec    # H4
+        # PATROL
+        return self.cfg.patrol.scan_timeout_sec
 
     def _on_scanning(self, detected, now, action):
         if detected:
@@ -1158,6 +1274,21 @@ class OmxYoloNode(Node):
         self.sm.compute_view_pose_fn = self.compute_view_pose  # H2
         self.sm.nav_cancel_fn = self.publish_nav_cancel        # H3
 
+        # H4: BoundaryGenerator (사주 경계 자동 sweep)
+        if self.cfg.boundary is None:
+            raise RuntimeError("config.yaml 에 boundary 섹션 필요")
+        self.boundary_gen = BoundaryGenerator(
+            cfg=self.cfg.boundary,
+            waffle_pose_fn=self.get_waffle_xy_yaw,
+            logger=self.get_logger(),
+        )
+        self.get_logger().info(
+            f"BoundaryGenerator: T={self.boundary_gen.enabled_target} "
+            f"P={self.boundary_gen.enabled_patrol}, "
+            f"sweep={self.boundary_gen.sweep_angles_deg} deg, "
+            f"period={self.cfg.boundary.period_sec}s, "
+            f"ttl={self.cfg.boundary.ttl_sec}s")
+
         self.ctrl.connect()
         self.ctrl.go_home()
 
@@ -1211,6 +1342,9 @@ class OmxYoloNode(Node):
         # H2 신규
         self.create_subscription(String, '/waffle/nav_result',
                                  self.on_nav_result, 10)
+        # H4 신규
+        self.create_subscription(String, '/omx/boundary_enable',
+                                 self.on_boundary_enable, 10)
 
         self.timer = self.create_timer(self.control_period, self.loop)
         self.status_timer = self.create_timer(1.0, self.publish_periodic)
@@ -1220,7 +1354,7 @@ class OmxYoloNode(Node):
         self.get_logger().info(
             f"Timer: 메인 {self.cfg.ibvs.control_hz} Hz, 상태 1 Hz")
         self.get_logger().info(f"Initial armed: {self.sm.armed}")
-        self.get_logger().info("=== Node ready (H2) ===")
+        self.get_logger().info("=== Node ready (H4) ===")
 
     # ----- Costmap -----
 
@@ -1454,6 +1588,41 @@ class OmxYoloNode(Node):
     def on_nav_result(self, msg: String):
         """H2: waffle_node 가 발행한 Nav2 액션 결과."""
         self.sm.on_nav_result(msg.data)
+
+    def on_boundary_enable(self, msg: String):
+        """H4: BOUNDARY 자동 생성 런타임 토글.
+        
+        메시지 형식 (소문자): 
+            'target on' / 'target off'
+            'patrol on' / 'patrol off'
+            'all on' / 'all off'
+        """
+        try:
+            which, action = msg.data.lower().strip().split()
+        except ValueError:
+            self.get_logger().warn(
+                f"잘못된 형식: '{msg.data}' (예: 'target on', 'all off')")
+            return
+
+        on = (action == 'on')
+        if action not in ('on', 'off'):
+            self.get_logger().warn(f"action 은 on/off: '{action}'")
+            return
+
+        if which == 'target':
+            self.boundary_gen.set_enabled(target=on)
+        elif which == 'patrol':
+            self.boundary_gen.set_enabled(patrol=on)
+        elif which == 'all':
+            self.boundary_gen.set_enabled(target=on, patrol=on)
+        else:
+            self.get_logger().warn(
+                f"unknown target: '{which}' (target/patrol/all 만)")
+            return
+
+        self.get_logger().info(
+            f"Boundary toggle: T={self.boundary_gen.enabled_target} "
+            f"P={self.boundary_gen.enabled_patrol}")
 
     # ----- Publishers -----
 
@@ -1716,6 +1885,14 @@ class OmxYoloNode(Node):
         # H3: TARGET miss 알림
         if action.get('target_not_found_coord') is not None:
             self.publish_target_not_found(action['target_not_found_coord'])
+
+        # H4: BOUNDARY 자동 생성 (WAITING_NAV + PATROL parent 일 때만)
+        if (self.sm.state == State.WAITING_NAV
+                and self.sm.current_parent is not None):
+            coord = self.boundary_gen.maybe_generate(
+                now, self.sm.current_parent.target_type)
+            if coord is not None:
+                self.sm.on_boundary(coord)
 
         self.publish_detected(detected)
         if error_norm is not None:
