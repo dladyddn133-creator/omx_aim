@@ -292,11 +292,15 @@ class OmxYoloNode(Node):
     # ----- LOS -----
 
     def check_line_of_sight(self, target_map) -> LOSResult:
-        if self.costmap is None:
-            return LOSResult.UNKNOWN
-
+        """와플 → target 의 LOS."""
         waffle = self.get_waffle_xy()
         if waffle is None:
+            return LOSResult.UNKNOWN
+        return self._los_between(waffle, (target_map[0], target_map[1]))
+
+    def _los_between(self, start_xy, end_xy) -> LOSResult:
+        """H5: 임의 두 점 사이 LOS. costmap 위에서 Bresenham."""
+        if self.costmap is None:
             return LOSResult.UNKNOWN
 
         info = self.costmap.info
@@ -304,12 +308,12 @@ class OmxYoloNode(Node):
         ox = info.origin.position.x
         oy = info.origin.position.y
 
-        wgx = int((waffle[0] - ox) / res)
-        wgy = int((waffle[1] - oy) / res)
-        tgx = int((target_map[0] - ox) / res)
-        tgy = int((target_map[1] - oy) / res)
+        sgx = int((start_xy[0] - ox) / res)
+        sgy = int((start_xy[1] - oy) / res)
+        egx = int((end_xy[0] - ox) / res)
+        egy = int((end_xy[1] - oy) / res)
 
-        cells = bresenham_line(wgx, wgy, tgx, tgy)
+        cells = bresenham_line(sgx, sgy, egx, egy)
 
         threshold = self.cfg.patrol.los_cost_threshold
         width = info.width
@@ -329,6 +333,27 @@ class OmxYoloNode(Node):
                 return LOSResult.BLOCKED
 
         return LOSResult.UNKNOWN if has_unknown else LOSResult.CLEAR
+
+    def _costmap_value(self, x, y) -> Optional[int]:
+        """H5: map frame (x, y) 의 costmap 값.
+
+        Returns: 0~100 (inflation), -1 (unknown 무시되어 None), None (경계 밖).
+        """
+        if self.costmap is None:
+            return None
+        info = self.costmap.info
+        res = info.resolution
+        ox = info.origin.position.x
+        oy = info.origin.position.y
+        gx = int((x - ox) / res)
+        gy = int((y - oy) / res)
+        if gx < 0 or gx >= info.width or gy < 0 or gy >= info.height:
+            return None
+        idx = gy * info.width + gx
+        cost = self.costmap.data[idx]
+        if cost == -1:
+            return None
+        return cost
 
     # ----- H2: CHECK_VIEW + VIEW_POSE -----
 
@@ -372,14 +397,23 @@ class OmxYoloNode(Node):
         return True
 
     def compute_view_pose(self, target_map, next_target_map=None):
-        """target 으로부터 stand_off_distance 만큼 떨어진 와플 위치 + yaw.
+        """VIEW_POSE v2 (H5): 후보 샘플링 + cost 평가.
+
+        target 주변 candidate_count 방향에서 stand_off_distance 떨어진 후보 생성.
+        각 후보의 필수 조건 (costmap free + LOS + OMX aim) 검사,
+        통과한 후보 중 최소 cost 선택.
+
+        cost 가중치는 코드 상수. 필요 시 config 로 옮길 수 있음.
+
+        yaw 정책 (H5):
+            target 방향과 next_target_map 방향의 짧은 경로 보간.
+            yaw_next_weight=0.5 → 중간, =1.0 → next 100% (이전 v1.1), =0.0 → target 100%.
 
         Args:
-            target_map: VIEW_POSE 의 기준 (와플이 도착할 위치 계산용).
-            next_target_map: 도착 후 와플이 향할 다음 target.
-                None 이면 target_map 방향 (기존 v1 fallback).
+            target_map: VIEW_POSE 기준 좌표 (와플 도착 위치 계산용).
+            next_target_map: 도착 후 와플이 향할 다음 target. None 이면 target 방향.
 
-        Returns: (x, y, yaw) in map frame, 또는 None.
+        Returns: (x, y, yaw) in map frame, 또는 None (적합 후보 없음).
         """
         waffle = self.get_waffle_xy()
         if waffle is None:
@@ -388,41 +422,92 @@ class OmxYoloNode(Node):
 
         tx, ty, _ = target_map
         wx, wy = waffle
+        vp_cfg = self.cfg.view_pose
+        stand_off = vp_cfg.stand_off_distance
 
-        dx = tx - wx
-        dy = ty - wy
-        d = math.hypot(dx, dy)
-        if d < 1e-3:
-            # 와플이 이미 target 위치. 임의 방향으로 stand off
+        # cost 가중치 (낮을수록 좋음)
+        W_INFL = 1.0    # costmap inflation (벽 가까움 penalty)
+        W_DIST = 2.0    # ideal stand_off 거리와의 편차
+        W_WAFL = 0.5    # 와플과의 거리 (이동 시간)
+
+        # 후보 N 방향 생성
+        n = vp_cfg.candidate_count
+        candidates = []
+        for i in range(n):
+            angle = 2.0 * math.pi * i / n
+            cx = tx + stand_off * math.cos(angle)
+            cy = ty + stand_off * math.sin(angle)
+            candidates.append((cx, cy))
+
+        # 필수 조건 + cost 평가
+        valid = []
+        rejection_reasons = {'costmap': 0, 'los': 0, 'omx': 0}
+
+        for cx, cy in candidates:
+            # 조건 1: costmap free
+            cost_val = self._costmap_value(cx, cy)
+            if cost_val is None or cost_val >= 80:
+                rejection_reasons['costmap'] += 1
+                continue
+
+            # 조건 2: LOS from candidate to target
+            los = self._los_between((cx, cy), (tx, ty))
+            if los == LOSResult.BLOCKED:
+                rejection_reasons['los'] += 1
+                continue
+
+            # 후보의 target 방향 yaw
+            cand_yaw_target = math.atan2(ty - cy, tx - cx)
+
+            # next_target 가중 보간으로 최종 yaw 계산
+            if next_target_map is not None:
+                nx, ny, _ = next_target_map
+                ndx, ndy = nx - cx, ny - cy
+                if math.hypot(ndx, ndy) > 1e-3:
+                    yaw_next = math.atan2(ndy, ndx)
+                    # 짧은 경로 보간: diff ∈ [-π, π]
+                    diff = ((yaw_next - cand_yaw_target + math.pi)
+                            % (2.0 * math.pi)) - math.pi
+                    final_yaw = (cand_yaw_target
+                                 + vp_cfg.yaw_next_weight * diff)
+                else:
+                    final_yaw = cand_yaw_target
+            else:
+                final_yaw = cand_yaw_target
+
+            # 조건 3: OMX aim feasibility
+            # 와플이 final_yaw 향한 상태에서 OMX 가 target 향할 yaw
+            omx_req = cand_yaw_target - final_yaw
+            omx_req = ((omx_req + math.pi) % (2.0 * math.pi)) - math.pi
+            if abs(math.degrees(omx_req)) > vp_cfg.omx_yaw_limit_deg:
+                rejection_reasons['omx'] += 1
+                continue
+
+            # Cost 계산
+            dist_to_target = math.hypot(tx - cx, ty - cy)
+            dist_from_waffle = math.hypot(wx - cx, wy - cy)
+            cost = (W_INFL * (cost_val / 100.0)
+                    + W_DIST * abs(dist_to_target - stand_off)
+                    + W_WAFL * dist_from_waffle)
+
+            valid.append((cost, cx, cy, final_yaw, cost_val, dist_from_waffle))
+
+        if not valid:
             self.get_logger().warn(
-                "compute_view_pose: 와플이 target 위에 있음")
+                f"VIEW_POSE v2: 적합 후보 없음 ({n}개 중 "
+                f"costmap={rejection_reasons['costmap']}, "
+                f"LOS={rejection_reasons['los']}, "
+                f"OMX={rejection_reasons['omx']})")
             return None
 
-        # 단위 벡터: 와플 → target
-        ux = dx / d
-        uy = dy / d
-        stand_off = self.cfg.view_pose.stand_off_distance
-
-        # VIEW_POSE = target 에서 stand_off 만큼 와플 쪽으로 떨어진 점
-        vp_x = tx - stand_off * ux
-        vp_y = ty - stand_off * uy
-
-        # H2.1: yaw 결정
-        if next_target_map is not None:
-            nx, ny, _ = next_target_map
-            ndx = nx - vp_x
-            ndy = ny - vp_y
-            if math.hypot(ndx, ndy) > 1e-3:
-                vp_yaw = math.atan2(ndy, ndx)
-                self.get_logger().info(
-                    f"VIEW_POSE yaw: 다음 main_queue 방향 "
-                    f"{math.degrees(vp_yaw):+.1f}° "
-                    f"(OMX 가 ±180° 회전해서 현재 target 조준)")
-                return (vp_x, vp_y, vp_yaw)
-
-        # fallback: 현재 target 방향
-        vp_yaw = math.atan2(ty - vp_y, tx - vp_x)
-        return (vp_x, vp_y, vp_yaw)
+        valid.sort()
+        cost, bx, by, byaw, infl, dw = valid[0]
+        self.get_logger().info(
+            f"VIEW_POSE v2: {n}개 중 {len(valid)} 적합, "
+            f"선택 cost={cost:.2f} (infl={infl}, "
+            f"dist_waffle={dw:.2f}m) "
+            f"-> ({bx:+.2f}, {by:+.2f}) yaw={math.degrees(byaw):+.1f}°")
+        return (bx, by, byaw)
 
     def transform_map_to_arm_base(self, coord_map):
         ps = PointStamped()

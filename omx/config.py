@@ -109,6 +109,8 @@ class ViewPoseConfig:
     min_distance_m: float = 0.3
     max_distance_m: float = 3.0
     stand_off_distance: float = 1.0
+    candidate_count: int = 12 
+    yaw_next_weight: float = 0.5
 
 
 @dataclass

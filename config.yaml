@@ -155,7 +155,8 @@ view_pose:
   min_distance_m: 0.3
   max_distance_m: 3.0
   stand_off_distance: 1.0
-  # candidate_count: 12
+  candidate_count: 12
+  yaw_next_weight: 0.5
 
 # ===========================================================
 # BOUNDARY 자동 생성 (H4 에서 활성화 예정)
