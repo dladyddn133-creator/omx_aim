@@ -1,233 +1,173 @@
-# OMX Aim
+# OMX Auto-Aim
 
-TurtleBot3 Waffle 위에 OpenManipulator-X (OMX) 를 올린 로봇 탱크의 자동 조준 시스템.
+OpenManipulator-X 기반 자동 조준 시스템. TurtleBot3 Waffle + OMX 6-DOF 팔 (4 모터 사용) + Jetson Orin Nano + ROS 2 Jazzy.
 
-## 시스템 개요
+YOLO 로 영상 검출, IBVS (Image-Based Visual Servoing) 로 정밀 조준, Nav2 로 와플 이동, 우선순위 큐 + state machine 으로 다중 좌표 처리.
 
-- **Waffle**: 자율 주행 + 정찰 좌표 생성 (Nav2 기반, 개발 중)
-- **OMX**: 표적 조준 + 격발 (좌표 기반 거친 조준 → YOLO 기반 정밀 조준)
-- **ROS 2 Jazzy** 토픽 인터페이스로 통합
+## 시스템 구성
 
 ```
-사용자 / 와플 → 좌표 publish → OMX 큐 → LOS 검사 → 조준 → 격발
+┌─ TurtleBot3 Waffle (mobile base)
+│   └─ Nav2 stack (navigation)
+│
+├─ OpenManipulator-X (4 모터: shoulder_pan/lift, elbow_flex, wrist_flex)
+│   └─ Dynamixel U2D2 → /dev/ttyUSB0
+│
+├─ Jetson Orin Nano 8GB
+│   ├─ ROS 2 Jazzy (Ubuntu 24.04, Python 3.12)
+│   ├─ YOLO (Ultralytics, custom trained model)
+│   ├─ OpenCV
+│   └─ omx_aim 패키지 (이 레포)
+│
+└─ 격발 MCU (예정)
+    └─ Jetson GPIO → 트랜지스터 → 발사
 ```
 
-## 주요 기능
+## 기능
 
-### 7단계 상태 머신
-```
-IDLE → AIMING → SCANNING → TRACKING → CONFIRMING → FIRING → COOLDOWN
-```
+- **다중 좌표 자동 처리** — 우선순위 큐 + state machine
+- **3 종 좌표 타입**:
+  - `TARGET` (priority 0) — 외부 신뢰 좌표, 최우선
+  - `BOUNDARY` (priority 5) — 이동 중 사주 경계 (자동 sweep 생성)
+  - `PATROL` (priority 10) — 탐색 좌표
+- **CHECK_VIEW + VIEW_POSE** — 현 위치에서 조준 불가하면 와플 이동 위치 자동 계산
+- **VIEW_POSE v2** — 12 방향 후보 샘플링 + costmap/LOS/OMX cost 평가
+- **TARGET preempt** — 처리 중 PATROL 보다 새 TARGET 우선
+- **사주 경계 sweep** — 이동 중 ±45° fan 으로 자동 둘러봄
+- **TF / costmap 통합** — Nav2 의 global_costmap 으로 LOS + free space 검사
 
-- **AIMING**: map 좌표를 arm_base 좌표로 TF 변환 후 거친 조준 (Point-at IK)
-- **SCANNING**: 표적 검출 대기 (2초)
-- **TRACKING**: YOLO 검출 + IBVS 정밀 추적
-- **CONFIRMING**: 0.5초 deadband 안정 확인 후 격발
-- **FIRING**: gripper close/open 으로 격발 시뮬레이션
-- **COOLDOWN**: 5초 대기 + home 복귀
+## 빠른 시작
 
-### 우선순위 큐 (heapq 기반)
-3단계 표적 분류:
-- **TARGET** (priority=0): 확정 표적 → 즉시 처리
-- **BOUNDARY** (priority=5): 경계 좌표 → LOS 엄격 적용
-- **PATROL** (priority=10): 정찰 좌표 → LOS 관대
-
-정렬 기준: `(priority, distance, count)`
-- 같은 priority 안에서 가까운 좌표 먼저
-- pop 직전에 와플 위치 기반 거리 재계산
-
-### LOS (Line of Sight) 검사
-Nav2 의 `/global_costmap/costmap` 활용한 Bresenham 직선 검사.
-
-| LOS 결과 | TARGET | BOUNDARY | PATROL |
-|---|---|---|---|
-| CLEAR | 처리 | 처리 | 처리 |
-| BLOCKED | 시도 | 폐기 | 시도 |
-| UNKNOWN | 처리 | 폐기 | 처리 |
-
-폐기된 좌표는 `/omx/target_blocked` 로 알림.
-
-### 좌표계 자동 변환
-- 큐는 map 좌표 (절대 좌표) 보관
-- AIMING 시점에 TF2 로 map → base_link → arm_base 변환
-- 와플 이동/회전해도 같은 좌표 유효
-
-### RViz 시각화
-`/omx/queue_markers` 토픽으로 큐 전체를 마커로 표시:
-- 빨강 큰 구체: TARGET
-- 주황 중간 구체: BOUNDARY
-- 노랑 작은 구체: PATROL
-- 초록 큰 구체: 현재 처리 중
-- 텍스트 라벨: 종류 + 거리
-
-### 안전 장치
-- 표적 추적 중 1.5초 잃으면 자동 IDLE 전이 + `/omx/target_lost` 알림
-- 격발 중 새 명령 무시 (CONFIRMING/FIRING)
-- 중복 좌표 필터링 (`duplicate_threshold_m`)
-- ABORT 토픽으로 비상 정지 + 큐 비움
-- 모터 각도 한계 + 스텝 크기 제한
-
-## 환경
-
-- Ubuntu 24.04
-- Python 3.12
-- ROS 2 Jazzy
-- LeRobot (Dynamixel 모터 제어)
-- ultralytics (YOLO 추론)
-- tf2_geometry_msgs (좌표 변환)
-- ROS_DOMAIN_ID = 28
-
-## 셋업
+### 환경 설정
 
 ```bash
-# 가상환경
-python3 -m venv ~/venv/omx_ros --system-site-packages
-source ~/venv/omx_ros/bin/activate
-source /opt/ros/jazzy/setup.bash
-
-# Python 패키지
-pip install lerobot ultralytics opencv-contrib-python PyYAML dynamixel-sdk
-pip install "numpy<2.0"
-
-# ROS 2 패키지
-sudo apt install ros-jazzy-tf2-geometry-msgs
-
 # alias
-alias omxenv='source /opt/ros/jazzy/setup.bash && source ~/venv/omx_ros/bin/activate && export ROS_DOMAIN_ID=28 && cd ~/omx_aim'
+alias omxenv='source /opt/ros/jazzy/setup.bash && \
+              source ~/venv/omx_ros/bin/activate && \
+              export ROS_DOMAIN_ID=28 && \
+              cd ~/omx_aim'
 ```
 
-## 폴더 구조
+### 실행
+
+```bash
+# 터미널 1: Gazebo + Nav2 + AMCL (별도 세팅)
+# ros2 launch turtlebot3_gazebo ...
+
+# 터미널 2: waffle_node (Nav2 클라이언트)
+omxenv
+python3 apps/waffle_node.py
+
+# 터미널 3: yolo_node (메인)
+omxenv
+python3 apps/yolo_node.py
+
+# OMX 없이 테스트
+python3 apps/yolo_node.py --dry-run
+```
+
+### 좌표 발행 (예시)
+
+```bash
+# PATROL (탐색)
+ros2 topic pub /omx/patrol_in_map geometry_msgs/PointStamped \
+  "{header: {frame_id: map}, point: {x: 3.0, y: 1.0, z: 0.3}}" --once
+
+# TARGET (즉시 처리)
+ros2 topic pub /omx/target_in_map geometry_msgs/PointStamped \
+  "{header: {frame_id: map}, point: {x: 1.5, y: 0.5, z: 0.3}}" --once
+
+# 긴급 정지
+ros2 topic pub /omx/abort std_msgs/Empty "{}" --once
+
+# BOUNDARY 자동 생성 토글
+ros2 topic pub /omx/boundary_enable std_msgs/String "{data: 'all off'}" --once
+```
+
+## 코드 구조
 
 ```
 omx_aim/
-├── omx/
-│   ├── __init__.py
-│   ├── hardware.py        # Dynamixel 모터 정의 + bus
-│   └── config.py          # YAML 설정 로딩 (dataclass)
-├── apps/
-│   ├── keyboard_teleop.py # 키보드 수동 제어
-│   ├── aim_test.py        # 좌표 기반 IK 테스트
-│   ├── yolo_test.py       # YOLO + IBVS 테스트
-│   ├── track_test.py      # 추적 검증
-│   ├── yolo_node.py       # 메인 ROS 2 노드 (큐 + LOS + 격발)
-│   ├── target_bridge.py   # 외부 좌표 → OMX 토픽 forward
-│   └── waffle_node.py     # (예정) 와플 정찰 노드
-├── models/
-│   └── best.pt            # YOLO 학습 모델 (enemy 클래스)
-├── config.yaml            # 캘리브레이션 + 튜닝
-├── INTERFACE.md           # ROS 토픽 인터페이스 명세
-├── SETUP.md               # 환경 셋업 상세
-└── README.md
+├── config.yaml              # 모든 설정
+├── INTERFACE_v4.md          # 인터페이스 명세 (토픽, state, 큐, config)
+├── README.md                # 이 파일
+│
+├── omx/                     # 핵심 로직 (ROS 의존성 없음)
+│   ├── types.py             # State, TargetType, LOSResult, TargetEntry
+│   ├── state_machine.py     # StateMachine (큐 + state 전이)
+│   ├── boundary_gen.py      # BoundaryGenerator (사주 경계)
+│   ├── yolo_detector.py     # YoloDetector
+│   ├── controller.py        # OmxController (Dynamixel + IBVS)
+│   ├── config.py            # dataclass + load_config
+│   └── hardware.py          # 저수준 DXL bus
+│
+├── apps/                    # ROS 노드
+│   ├── yolo_node.py         # OmxYoloNode 메인
+│   ├── waffle_node.py       # Nav2 클라이언트
+│   ├── target_bridge.py
+│   ├── keyboard_teleop.py
+│   ├── aim_test.py
+│   └── track_test.py
+│
+└── models/
+    └── best.pt              # YOLO 학습 모델
 ```
 
-## 사용
+핵심 로직 (`omx/`) 은 ROS 의존성 없이 콜백 주입 패턴으로 분리. `OmxYoloNode` 가 ROS pub/sub + TF + costmap 만 담당.
 
-### 단일 노드 테스트
+## 토픽 요약
 
-```bash
-omxenv
+자세한 내용은 [`INTERFACE_v4.md`](INTERFACE.md) 참조.
 
-# 키보드 직접 제어
-python3 apps/keyboard_teleop.py
+### 입력 (외부 → yolo_node)
+- `/omx/target_in_map` — TARGET 좌표
+- `/omx/patrol_in_map` — PATROL 좌표
+- `/omx/boundary_in_map` — BOUNDARY 좌표 (디버그)
+- `/omx/abort` — 긴급 정지
+- `/omx/boundary_enable` — BOUNDARY 자동 생성 토글
 
-# 좌표 입력으로 조준 테스트
-python3 apps/aim_test.py --dry-run
+### 출력 (yolo_node → 외부)
+- `/omx/fire` — 격발 신호 (외부 MCU)
+- `/omx/nav_goal` — waffle 이동 목표
+- `/omx/state` — state machine 상태
+- `/omx/target_processed`, `/omx/target_lost`, `/omx/target_not_found` — 알림
 
-# YOLO 검출만 테스트
-python3 apps/yolo_test.py --dry-run
-```
+## 시각화
 
-### 통합 시스템 (Gazebo + RViz)
+RViz 에서:
+- `/omx/queue_markers` — 큐 안의 좌표 (TARGET 빨강, BOUNDARY 주황, PATROL 노랑)
+- `/omx/nav_goal` — VIEW_POSE
+- `/global_costmap/costmap` — VIEW_POSE v2 후보 평가에 사용
 
-```bash
-# Terminal A: Gazebo + Nav2 (와플 시뮬레이션)
-# (별도 launch 파일)
-
-# Terminal B: target_bridge
-omxenv
-python3 apps/target_bridge.py
-
-# Terminal C: OMX 메인 노드
-omxenv
-python3 apps/yolo_node.py --dry-run    # OMX 실 장비 없을 때
-# 또는
-python3 apps/yolo_node.py              # OMX 실 장비 있을 때
-```
-
-### 좌표 publish 예시
-
-```bash
-# 정찰 좌표 (NORMAL priority)
-ros2 topic pub /omx/patrol_in_map geometry_msgs/PointStamped \
-  "{header: {frame_id: map}, point: {x: 1.0, y: 0.0, z: 0.3}}" --once
-
-# 긴급 표적 (HIGH priority)
-ros2 topic pub /omx/target_in_map geometry_msgs/PointStamped \
-  "{header: {frame_id: map}, point: {x: 2.0, y: 1.0, z: 0.3}}" --once
-
-# 경계 좌표 (MID priority, LOS 엄격)
-ros2 topic pub /omx/boundary_in_map geometry_msgs/PointStamped \
-  "{header: {frame_id: map}, point: {x: 1.5, y: 0.5, z: 0.3}}" --once
-
-# RViz 'Publish Point' (P 키 + 클릭) → 자동으로 긴급 표적으로 전달
-```
-
-## ROS 토픽 인터페이스
-
-### Subscribe (외부 → OMX)
-
-| 토픽 | 타입 | 용도 |
-|---|---|---|
-| `/omx/target_in_map` | PointStamped | TARGET (HIGH) |
-| `/omx/boundary_in_map` | PointStamped | BOUNDARY (MID) |
-| `/omx/patrol_in_map` | PointStamped | PATROL (LOW) |
-| `/omx/control_mode` | String | idle (강제 IDLE) |
-| `/omx/arm_enable` | Bool | 자율 검출 토글 |
-| `/omx/abort` | Empty | 비상 정지 |
-| `/global_costmap/costmap` | OccupancyGrid | LOS 검사용 |
-
-### Publish (OMX → 외부)
-
-| 토픽 | 타입 | 용도 |
-|---|---|---|
-| `/omx/status` | String | 1Hz 상태 |
-| `/omx/state` | String | 상태 변경 시 |
-| `/omx/target_detected` | Bool | 매 프레임 검출 여부 |
-| `/omx/error_norm` | Point | 화면 중심 오차 |
-| `/omx/joint_state` | JointState | 매 프레임 관절 위치 |
-| `/omx/fire` | Empty | 격발 1회 |
-| `/omx/target_processed` | PointStamped | 격발 완료 좌표 |
-| `/omx/target_lost` | PointStamped | 추적 잃음 좌표 |
-| `/omx/target_blocked` | PointStamped | LOS 차단 좌표 |
-| `/omx/aim_progress` | Float32 | CONFIRMING 진행도 (0~1) |
-| `/omx/queue_size` | Int32 | 큐 크기 |
-| `/omx/patrol_complete` | Empty | 큐 비었을 때 |
-| `/omx/queue_markers` | MarkerArray | RViz 시각화 |
-
-자세한 내용은 [INTERFACE.md](INTERFACE.md).
+OpenCV 창:
+- 영상 + bbox + state + 큐 크기 + AIM/SCAN/LOST 진행도 바
 
 ## 진화 단계
 
-| 단계 | 기능 | 상태 |
-|---|---|---|
-| A | 우선순위 큐 (heapq), 격발 | 완료 |
-| D | map 좌표 기반 큐 (TF 변환) | 완료 |
-| F | LOS 검사 + TargetType 카테고리 | 완료 |
-| G | 거리 기반 정렬 + RViz 마커 | 완료 |
-| 와플 노드 | Nav2 기반 정찰 (단순 waypoint) | 진행 중 |
-| E | 큐 매니저 노드 분리 | 예정 |
-| H | 후보 위치 + 와플 자율 결정 | 예정 |
-| - | LLM 통합 (자연어 명령) | 장기 |
-| - | 격발 메커니즘 하드웨어 통합 (별도 MCU) | 장기 |
+| Stage | 내용 |
+|---|---|
+| A/D/F/G | 큐 기본, LOS 검사, 거리 정렬, RViz 마커 |
+| H1 | waffle_node 분리 (Nav2 클라이언트) |
+| H2 | CHECK_VIEW + VIEW_POSE v1 + WAITING_NAV + 큐 분리 |
+| H3 | TARGET preempt (PATROL 폐기/큐 복귀), TARGET miss 알림 |
+| H4 | BoundaryGenerator 통합, 자동 sweep + 토글 토픽, TTL |
+| H5 | VIEW_POSE v2 — 12 후보 샘플링 + cost 평가 |
+| R1~R6 | 코드 모듈 분리 (omx/types, state_machine, boundary_gen, yolo_detector, controller) |
 
-## 개발 이력
+다음 후보: 격발 MCU 펌웨어, LLM 명령 해석, 다중 로봇 협력 (외부 트랙).
 
-- 2026.06.05: 초기 환경 셋업 + 모듈 + GitHub
-- 2026.06.08: 다중 PC 마이그레이션 + ROS 2 노드 시작
-- 2026.06.10: 상태 머신 + 우선순위 큐 + target_bridge
-- 2026.06.10~: 단계 D/F/G + target_lost/blocked + 팀 중간 발표
-- 진행 중: 와플 측 노드 설계 (Nav2 기반 단순 waypoint)
+## 의존성
 
-## 라이선스
+- ROS 2 Jazzy
+- Ubuntu 24.04
+- Python 3.12
+- Ultralytics YOLO
+- OpenCV
+- Dynamixel SDK
+- Nav2 (TurtleBot3)
+- tf2_geometry_msgs
 
-학생 프로젝트 (개인 학습 목적).
+```bash
+sudo apt install ros-jazzy-tf2-geometry-msgs ros-jazzy-nav2-msgs
+pip install ultralytics opencv-python
+```
