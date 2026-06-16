@@ -39,7 +39,7 @@ calibration:
   # 회전 방향 부호. 검증 후 반대로 돌면 -1 로 뒤집기.
   sign:
     shoulder_pan:  1
-    shoulder_lift: 1
+    shoulder_lift: -1
     elbow_flex:    1
     wrist_flex:    1
     # wrist_roll:    1
@@ -81,8 +81,9 @@ ibvs:
   kp_yaw:   0.02            # 비례 게인 (rad / normalized error)
   kp_pitch: 0.02
   sign_vs_x: -1             # 카메라 마운팅에 따른 부호
-  sign_vs_y: 1
-  deadband:    0.03         # 화면 폭의 3%
+  sign_vs_y: -1
+  deadband_x:  0.03        # 화면 폭의 3%
+  deadband_y:  0.09         # ← 신규 (위아래 3배 여유)
   control_hz:  25.0         # 제어 주기
 
 yolo:
@@ -168,7 +169,7 @@ boundary:
   fan_half_angle_deg: 45.0       # ± 이 각도 (좌우 합 90° fan)
   angle_step_deg: 22.5
   distance_m: 1.5
-  z: 0.18
+  z: 0.00
   period_sec: 2.0
   max_queue_size: 10
   ttl_sec: 10.0

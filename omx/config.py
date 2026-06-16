@@ -56,7 +56,8 @@ class IbvsConfig:
     kp_pitch: float
     sign_vs_x: int
     sign_vs_y: int
-    deadband: float
+    deadband_x: float         # ← deadband → deadband_x
+    deadband_y: float
     control_hz: float
 
 

@@ -143,10 +143,11 @@ class OmxController:
         Returns: True if 움직임 발생, False otherwise.
         """
         max_step = self.cfg.safety.max_step_rad
-        deadband = self.cfg.ibvs.deadband
+        deadband_x = self.cfg.ibvs.deadband_x
+        deadband_y = self.cfg.ibvs.deadband_y
 
-        ex = 0.0 if abs(error_x) < deadband else error_x
-        ey = 0.0 if abs(error_y) < deadband else error_y
+        ex = 0.0 if abs(error_x) < deadband_x else error_x
+        ey = 0.0 if abs(error_y) < deadband_y else error_y
 
         if ex == 0.0 and ey == 0.0:
             return False

@@ -615,8 +615,9 @@ class StateMachine:
         if detected:
             self.lost_start_t = 0.0
             ex, ey = error_norm
-            deadband = self.cfg.ibvs.deadband
-            if abs(ex) < deadband and abs(ey) < deadband:
+            db_x = self.cfg.ibvs.deadband_x
+            db_y = self.cfg.ibvs.deadband_y
+            if abs(ex) < db_x and abs(ey) < db_y:
                 self._log("표적 deadband 진입 -> CONFIRMING")
                 self.transition(State.CONFIRMING)
                 self.confirm_start_t = now
@@ -646,9 +647,10 @@ class StateMachine:
             self.confirm_progress = 0.0
         else:
             ex, ey = error_norm
-            confirm_db = (self.cfg.ibvs.deadband
-                          * self.cfg.fire.confirm_deadband_scale)
-            if abs(ex) > confirm_db or abs(ey) > confirm_db:
+            scale = self.cfg.fire.confirm_deadband_scale
+            confirm_db_x = self.cfg.ibvs.deadband_x * scale
+            confirm_db_y = self.cfg.ibvs.deadband_y * scale
+            if abs(ex) > confirm_db_x or abs(ey) > confirm_db_y:
                 self._log("CONFIRMING 중 이탈 -> TRACKING")
                 self.transition(State.TRACKING)
                 self.confirm_progress = 0.0

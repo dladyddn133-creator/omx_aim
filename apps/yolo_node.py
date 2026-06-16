@@ -142,7 +142,7 @@ class OmxYoloNode(Node):
         # Arm base offset
         self.declare_parameter('arm_base_x', 0.10)
         self.declare_parameter('arm_base_y', 0.00)
-        self.declare_parameter('arm_base_z', 0.18)
+        self.declare_parameter('arm_base_z', 0.00)
         self.arm_offset = (
             self.get_parameter('arm_base_x').value,
             self.get_parameter('arm_base_y').value,
@@ -895,12 +895,13 @@ class OmxYoloNode(Node):
     def visualize(self, frame, detected, error_norm, bbox, conf, action):
         h, w = frame.shape[:2]
         cx, cy = w / 2.0, h / 2.0
-        deadband = self.cfg.ibvs.deadband
+        deadband_x = self.cfg.ibvs.deadband_x
+        deadband_y = self.cfg.ibvs.deadband_y
 
         cv2.drawMarker(frame, (int(cx), int(cy)),
                        (0, 255, 255), cv2.MARKER_CROSS, 20, 1)
-        dz_x = int(deadband * cx)
-        dz_y = int(deadband * cy)
+        dz_x = int(deadband_x * cx)
+        dz_y = int(deadband_y * cy)
         cv2.rectangle(frame,
                       (int(cx) - dz_x, int(cy) - dz_y),
                       (int(cx) + dz_x, int(cy) + dz_y),
