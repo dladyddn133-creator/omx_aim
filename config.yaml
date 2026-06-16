@@ -12,7 +12,7 @@
 # ===========================================================
 motor:
   port: /dev/omx_follower
-  profile_velocity: 30        # 0 = 최대속도(위험). 30 = 매우 천천히
+  profile_velocity: 100        # 0 = 최대속도(위험). 30 = 매우 천천히
   profile_acceleration: 10
 
   # elbow_flex PID (omx_follower 기본값)
@@ -78,8 +78,8 @@ keyboard:
 # ===========================================================
 ibvs:
   camera_index: 0
-  kp_yaw:   0.02            # 비례 게인 (rad / normalized error)
-  kp_pitch: 0.02
+  kp_yaw:   0.05            # 비례 게인 (rad / normalized error)
+  kp_pitch: 0.05
   sign_vs_x: -1             # 카메라 마운팅에 따른 부호
   sign_vs_y: -1
   deadband_x:  0.03        # 화면 폭의 3%
