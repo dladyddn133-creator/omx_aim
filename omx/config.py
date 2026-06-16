@@ -59,6 +59,17 @@ class IbvsConfig:
     deadband_x: float         # ← deadband → deadband_x
     deadband_y: float
     control_hz: float
+    # ----- 움직이는 표적 추적 (Phase B) -----
+    # 미분 게인. 0 이면 순수 P (기존 동작 유지).
+    # 권장 시작값: kp * 0.1 ~ 0.3 (예: kp=0.02 -> kd=0.002~0.006)
+    kd_yaw: float = 0.0
+    kd_pitch: float = 0.0
+    # de/dt EMA 필터 강도. 1.0 = 필터 없음(노이즈 그대로),
+    # 0.3~0.5 = 노이즈 잘 잡힘, 0.1 = 매우 부드러움(반응 느림).
+    derivative_ema_alpha: float = 0.4
+    # IBVS 호출 간격이 이보다 크면 미분 상태 reset
+    # (TRACKING 재진입, 표적 잃었다 다시 잡힘 등의 케이스)
+    derivative_reset_gap_sec: float = 0.5
 
 
 @dataclass

@@ -38,6 +38,12 @@ class OmxController:
         self.yaw = 0.0
         self.pitch = 0.0
         self.logger = logger
+        # IBVS 미분항 상태 (lead compensation, Phase B)
+        self._prev_error_x = 0.0
+        self._prev_error_y = 0.0
+        self._de_x_ema = 0.0
+        self._de_y_ema = 0.0
+        self._prev_ibvs_t = None
 
     def _log(self, msg, level="info"):
         if self.logger:
@@ -135,25 +141,59 @@ class OmxController:
 
     def step_ibvs(self, error_x, error_y):
         """IBVS (Image-Based Visual Servoing) 한 스텝.
-        
+
         영상 오차 (ex, ey, [-1, 1] 정규화) 기반 yaw/pitch 미세 보정.
         deadband 안이면 움직임 없음.
         max_step 으로 한 tick 당 이동 제한.
-        
+
+        Phase B (움직이는 표적):
+            kd_yaw / kd_pitch 가 0 이면 순수 P controller (기존 동작 동일).
+            kd > 0 이면 EMA 필터링된 de/dt 를 더해 미래 위치 예측
+            (lead compensation).
+
         Returns: True if 움직임 발생, False otherwise.
         """
         max_step = self.cfg.safety.max_step_rad
         deadband_x = self.cfg.ibvs.deadband_x
         deadband_y = self.cfg.ibvs.deadband_y
 
+        # ----- 미분항 업데이트 (deadband 와 무관하게 항상 갱신) -----
+        now = time.time()
+        if self._prev_ibvs_t is None:
+            dt = 0.0
+        else:
+            dt = now - self._prev_ibvs_t
+        self._prev_ibvs_t = now
+
+        reset_gap = self.cfg.ibvs.derivative_reset_gap_sec
+        if dt <= 0.0 or dt > reset_gap:
+            # 첫 호출 또는 오랜만에 재진입 -> 미분 reset
+            self._de_x_ema = 0.0
+            self._de_y_ema = 0.0
+        else:
+            de_x_raw = (error_x - self._prev_error_x) / dt
+            de_y_raw = (error_y - self._prev_error_y) / dt
+            alpha = self.cfg.ibvs.derivative_ema_alpha
+            self._de_x_ema = alpha * de_x_raw + (1.0 - alpha) * self._de_x_ema
+            self._de_y_ema = alpha * de_y_raw + (1.0 - alpha) * self._de_y_ema
+        self._prev_error_x = error_x
+        self._prev_error_y = error_y
+
+        # ----- Deadband gate (기존 그대로) -----
         ex = 0.0 if abs(error_x) < deadband_x else error_x
         ey = 0.0 if abs(error_y) < deadband_y else error_y
 
         if ex == 0.0 and ey == 0.0:
             return False
 
-        delta_yaw = self.cfg.ibvs.sign_vs_x * self.cfg.ibvs.kp_yaw * ex
-        delta_pitch = self.cfg.ibvs.sign_vs_y * self.cfg.ibvs.kp_pitch * ey
+        # ----- P + D (lead) -----
+        kp_y = self.cfg.ibvs.kp_yaw
+        kp_p = self.cfg.ibvs.kp_pitch
+        kd_y = self.cfg.ibvs.kd_yaw
+        kd_p = self.cfg.ibvs.kd_pitch
+
+        delta_yaw   = self.cfg.ibvs.sign_vs_x * (kp_y * ex + kd_y * self._de_x_ema)
+        delta_pitch = self.cfg.ibvs.sign_vs_y * (kp_p * ey + kd_p * self._de_y_ema)
 
         delta_yaw = max(-max_step, min(max_step, delta_yaw))
         delta_pitch = max(-max_step, min(max_step, delta_pitch))
@@ -174,14 +214,25 @@ class OmxController:
             home = self.cfg.calibration.home
             sign = self.cfg.calibration.sign
             yaw_tick = int(round(home["shoulder_pan"]
-                                 + sign["shoulder_pan"] * new_yaw * RAD2TICK))
+                                + sign["shoulder_pan"] * new_yaw * RAD2TICK))
             pitch_tick = int(round(home["shoulder_lift"]
-                                   + sign["shoulder_lift"] * new_pitch * RAD2TICK))
+                                + sign["shoulder_lift"] * new_pitch * RAD2TICK))
             self.bus.write("Goal_Position", "shoulder_pan",
-                           yaw_tick, normalize=False)
+                        yaw_tick, normalize=False)
             self.bus.write("Goal_Position", "shoulder_lift",
-                           pitch_tick, normalize=False)
+                        pitch_tick, normalize=False)
         return True
+    def reset_ibvs_filter(self):
+        """IBVS 미분 상태 초기화.
+
+        TRACKING 새로 진입할 때 호출하면 깔끔하지만,
+        호출 안 해도 derivative_reset_gap_sec 기반 자동 reset 됨.
+        """
+        self._prev_error_x = 0.0
+        self._prev_error_y = 0.0
+        self._de_x_ema = 0.0
+        self._de_y_ema = 0.0
+        self._prev_ibvs_t = None
 
     # ----- 격발 -----
 

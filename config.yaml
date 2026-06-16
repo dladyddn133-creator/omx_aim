@@ -79,12 +79,24 @@ keyboard:
 ibvs:
   camera_index: 0
   kp_yaw:   0.05            # 비례 게인 (rad / normalized error)
-  kp_pitch: 0.05
+  kp_pitch: 0.03
   sign_vs_x: -1             # 카메라 마운팅에 따른 부호
   sign_vs_y: -1
   deadband_x:  0.03        # 화면 폭의 3%
   deadband_y:  0.09         # ← 신규 (위아래 3배 여유)
   control_hz:  25.0         # 제어 주기
+  # ----- 움직이는 표적 추적 (Phase B) -----
+  # 0 = 순수 P (정적 표적, 기존 동작과 동일)
+  # 권장 시작값: kp * 0.1 정도부터 점진적으로
+  kd_yaw:   0.01
+  kd_pitch: 0.01
+
+  # EMA 필터 (de/dt 노이즈 완화)
+  # 1.0 = 필터 없음, 0.3~0.5 = 권장, 0.1 = 매우 부드러움
+  derivative_ema_alpha: 0.4
+
+  # 미분 상태 자동 reset 기준 (TRACKING 재진입 케이스)
+  derivative_reset_gap_sec: 0.5
 
 yolo:
   model_path: ../models/best.pt    # 학습 모델 쓸 때는 ./models/best.pt 같은 경로로 교체
