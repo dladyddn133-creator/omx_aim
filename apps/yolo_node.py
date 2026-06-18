@@ -111,11 +111,12 @@ class OmxYoloNode(Node):
     토픽/state/큐 정책 상세는 INTERFACE_v3.md 참조.
     """
 
-    def __init__(self, dry_run: bool = False):
+    def __init__(self, dry_run: bool = False, no_display: bool = False):
         super().__init__('omx_yolo_node')
 
         self.cfg = load_config()
         self.dry_run = dry_run
+        self.no_display = no_display
         self.get_logger().info(f"Config loaded. port={self.cfg.motor.port}")
 
         if self.cfg.fire is None:
@@ -881,10 +882,10 @@ class OmxYoloNode(Node):
         self.publish_progress(action.get('confirm_progress', 0.0))
         self.publish_state_change()
 
-        self.visualize(frame, detected, error_norm, bbox, conf, action)
-
-        key = cv2.waitKey(1) & 0xFF
-        self._handle_key(key)
+        if not self.no_display:
+            self.visualize(frame, detected, error_norm, bbox, conf, action)
+            key = cv2.waitKey(1) & 0xFF
+            self._handle_key(key)
 
         self.fps_n += 1
         if now - self.fps_t >= 1.0:
@@ -1048,12 +1049,15 @@ def main(args=None):
         description="OMX YOLO ROS 2 node - Stage H4 (modular)")
     parser.add_argument("--dry-run", action="store_true",
                         help="OMX 없이 카메라 + 검출만")
+    parser.add_argument("--no-display", action="store_true",
+                        help="OpenCV 화면 표시 끔 (헤드리스 SSH 환경 등)")
     cli_args, ros_args = parser.parse_known_args()
 
     rclpy.init(args=ros_args)
 
     try:
-        node = OmxYoloNode(dry_run=cli_args.dry_run)
+        node = OmxYoloNode(dry_run=cli_args.dry_run,
+                           no_display=cli_args.no_display)
         try:
             rclpy.spin(node)
         finally:
