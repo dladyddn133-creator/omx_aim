@@ -111,7 +111,11 @@ class OmxYoloNode(Node):
     토픽/state/큐 정책 상세는 INTERFACE_v3.md 참조.
     """
 
-    def __init__(self, dry_run: bool = False, no_display: bool = False):
+    def __init__(self, dry_run: bool = False, no_display: bool = False,
+                debug_stream: bool = False,
+                debug_port: int = 8080,
+                debug_fps: int = 15,
+                debug_quality: int = 70):
         super().__init__('omx_yolo_node')
 
         self.cfg = load_config()
@@ -241,7 +245,15 @@ class OmxYoloNode(Node):
         # H4 신규
         self.create_subscription(String, '/omx/boundary_enable',
                                  self.on_boundary_enable, 10)
-
+        self.debug_stream = None
+        if debug_stream:
+            from omx.debug_stream import DebugStream
+            self.debug_stream = DebugStream(
+                port=debug_port, fps=debug_fps, quality=debug_quality)
+            self.debug_stream.start()
+            self.get_logger().info(
+                f"Debug stream ON: http://0.0.0.0:{debug_port}/ "
+                f"(fps={debug_fps}, q={debug_quality})")
         self.timer = self.create_timer(self.control_period, self.loop)
         self.status_timer = self.create_timer(1.0, self.publish_periodic)
 
@@ -882,8 +894,16 @@ class OmxYoloNode(Node):
         self.publish_progress(action.get('confirm_progress', 0.0))
         self.publish_state_change()
 
-        if not self.no_display:
+        # 그리기: display 또는 stream 둘 중 하나라도 필요하면 호출
+        need_viz = (not self.no_display) or (self.debug_stream is not None)
+        if need_viz:
             self.visualize(frame, detected, error_norm, bbox, conf, action)
+            if self.debug_stream is not None:
+                self.debug_stream.update(frame)
+
+        # 표시: GUI 가 있을 때만
+        if not self.no_display:
+            cv2.imshow("OMX YOLO node", frame)
             key = cv2.waitKey(1) & 0xFF
             self._handle_key(key)
 
@@ -1017,7 +1037,7 @@ class OmxYoloNode(Node):
                     (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX,
                     0.45, (180, 180, 180), 1)
 
-        cv2.imshow("OMX YOLO node", frame)
+        # cv2.imshow("OMX YOLO node", frame)
 
     def _handle_key(self, key):
         if key == 27:
@@ -1051,13 +1071,25 @@ def main(args=None):
                         help="OMX 없이 카메라 + 검출만")
     parser.add_argument("--no-display", action="store_true",
                         help="OpenCV 화면 표시 끔 (헤드리스 SSH 환경 등)")
+    parser.add_argument("--debug-stream", action="store_true",
+                        help="Flask MJPEG 디버그 스트림 (http://host:port/)")
+    parser.add_argument("--debug-port", type=int, default=8080,
+                        help="--debug-stream 포트 (기본 8080)")
+    parser.add_argument("--debug-fps", type=int, default=15,
+                        help="--debug-stream FPS 제한 (기본 15)")
+    parser.add_argument("--debug-quality", type=int, default=70,
+                        help="--debug-stream JPEG quality 10~95 (기본 70)")
     cli_args, ros_args = parser.parse_known_args()
 
     rclpy.init(args=ros_args)
 
     try:
         node = OmxYoloNode(dry_run=cli_args.dry_run,
-                           no_display=cli_args.no_display)
+                   no_display=cli_args.no_display,
+                   debug_stream=cli_args.debug_stream,
+                   debug_port=cli_args.debug_port,
+                   debug_fps=cli_args.debug_fps,
+                   debug_quality=cli_args.debug_quality)
         try:
             rclpy.spin(node)
         finally:

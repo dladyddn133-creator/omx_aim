@@ -367,6 +367,12 @@ class StateMachine:
 
     def on_abort(self):
         self._log("ABORT - IDLE + 모든 큐 비움")
+        # 안전: 상태 무관 무조건 nav_cancel 발송.
+        # waffle_node 가 IDLE 이면 어차피 무시 (이미 그렇게 구현돼 있음).
+        if self.nav_cancel_fn is not None:
+            self.nav_cancel_fn()
+            self._log("ABORT: nav_cancel 발송")
+
         self.transition(State.IDLE)
         self.main_queue.clear()
         self.boundary_queue.clear()
