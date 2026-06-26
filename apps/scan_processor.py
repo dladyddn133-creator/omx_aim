@@ -12,28 +12,31 @@ OMX Auto-Aim 프로젝트의 lidar 전처리 노드. 와플의 자기 구조물
     4. 5초마다 마스킹 통계 로그
 
 토픽:
-    Sub: /scan_raw  (sensor_qos = BEST_EFFORT)
-    Pub: /scan      (sensor_qos = BEST_EFFORT)
+    Sub: /scan           (sensor_qos = BEST_EFFORT)
+    Pub: /scan_filtered  (sensor_qos = BEST_EFFORT)
 
-사용:
-    # bringup 의 lidar 출력을 /scan_raw 로 remap
-    ros2 launch turtlebot3_bringup robot.launch.py \\
-        --ros-args -r /scan:=/scan_raw
+사용 (가장 단순):
+    python3 apps/scan_processor.py
 
-    # scan_processor 실행 (현재 권장값)
+    → 아래 DEFAULTS 의 운영 권장값으로 실행됨.
+
+사용 (튜닝 시 override):
     python3 apps/scan_processor.py --ros-args \\
-        -p flip_180:=false \\
-        -p 'mask_ranges_deg:=[32.7, 40.2, -40.2, -32.7]' \\
-        -p min_valid_range:=0.18
+        -p 'mask_ranges_deg:=[30.0, 42.0, -42.0, -30.0]' \\
+        -p min_valid_range:=0.20
+
+마스킹 끄기 (sentinel [0.0]):
+    python3 apps/scan_processor.py --ros-args \\
+        -p 'mask_ranges_deg:=[0.0]'
 
 파라미터:
     flip_180          (bool)     기본 false. true 면 ranges 배열 절반 swap.
     mask_ranges_deg   (double[]) [lo1, hi1, lo2, hi2, ...]. 단위 degree.
                                  wrap-around 지원 (예: [170, -170] = ±180°).
-                                 빈 리스트면 마스킹 안 함.
-    min_valid_range   (double)   기본 0.0 (비활성). 이 미만 거리는 inf.
-    max_valid_range   (double)   기본 0.0 (비활성). 이 초과 거리는 inf.
-    log_period_sec    (double)   통계 로그 주기 (기본 5.0초, 0 이면 끔)
+                                 sentinel [0.0] 또는 짝수 길이 아니면 비활성.
+    min_valid_range   (double)   이 미만 거리는 inf. 0 이면 비활성.
+    max_valid_range   (double)   이 초과 거리는 inf. 0 이면 비활성.
+    log_period_sec    (double)   통계 로그 주기. 0 이면 끔.
 """
 from __future__ import annotations
 
@@ -46,6 +49,19 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 
 
+# ============================================================
+# 운영 권장값 — 명령행에서 안 줘도 이 값으로 동작
+# 와플의 자기 구조물 (좌우 +35°, -35°) 마스킹 + 18cm 이내 거리 컷
+# ============================================================
+DEFAULTS = {
+    'flip_180': False,                                       # 라이다 정방향 부착됨
+    'mask_ranges_deg': [32.7, 40.2, -40.2, -32.7],           # 좌우 자기 구조물
+    'min_valid_range': 0.22,                                 # 22cm 이내 무시
+    'max_valid_range': 0.0,                                  # 비활성
+    'log_period_sec': 5.0,                                   # 5초마다 통계
+}
+
+
 def _normalize_pi(angle: float) -> float:
     """각도를 -π ~ π 로 정규화."""
     return math.atan2(math.sin(angle), math.cos(angle))
@@ -55,12 +71,12 @@ class ScanProcessor(Node):
     def __init__(self):
         super().__init__('scan_processor')
 
-        # ===== 파라미터 선언 =====
-        self.declare_parameter('flip_180', False)
-        self.declare_parameter('mask_ranges_deg', [])
-        self.declare_parameter('min_valid_range', 0.0)
-        self.declare_parameter('max_valid_range', 0.0)
-        self.declare_parameter('log_period_sec', 5.0)
+        # ===== 파라미터 선언 (default 가 명확한 타입이라 BYTE_ARRAY 문제 없음) =====
+        self.declare_parameter('flip_180', DEFAULTS['flip_180'])
+        self.declare_parameter('mask_ranges_deg', DEFAULTS['mask_ranges_deg'])
+        self.declare_parameter('min_valid_range', DEFAULTS['min_valid_range'])
+        self.declare_parameter('max_valid_range', DEFAULTS['max_valid_range'])
+        self.declare_parameter('log_period_sec', DEFAULTS['log_period_sec'])
 
         # ===== 파라미터 로드 =====
         self.flip = bool(self.get_parameter('flip_180').value)
@@ -70,12 +86,15 @@ class ScanProcessor(Node):
 
         # 마스킹 각도 파싱 (deg → rad, 정규화)
         mask_raw = list(self.get_parameter('mask_ranges_deg').value or [])
+        # sentinel [0.0] = "마스킹 끄기"
+        if mask_raw == [0.0]:
+            mask_raw = []
         self.mask: List[Tuple[float, float]] = []
         if mask_raw:
             if len(mask_raw) % 2 != 0:
                 self.get_logger().error(
                     f"mask_ranges_deg 개수가 홀수: {len(mask_raw)} "
-                    "(쌍으로 줘야 함)")
+                    "(쌍으로 줘야 함). 마스킹 비활성.")
             else:
                 for i in range(0, len(mask_raw), 2):
                     lo = _normalize_pi(math.radians(float(mask_raw[i])))
@@ -90,10 +109,10 @@ class ScanProcessor(Node):
 
         # ===== ROS I/O =====
         self.sub = self.create_subscription(
-            LaserScan, '/scan_raw', self.on_scan,
+            LaserScan, '/scan', self.on_scan,
             qos_profile_sensor_data)
         self.pub = self.create_publisher(
-            LaserScan, '/scan', qos_profile_sensor_data)
+            LaserScan, '/scan_filtered', qos_profile_sensor_data)
 
         # 주기 로그
         if log_period > 0:
@@ -104,10 +123,10 @@ class ScanProcessor(Node):
             ', '.join(
                 f"[{math.degrees(a):+.1f}°,{math.degrees(b):+.1f}°]"
                 for a, b in self.mask)
-            if self.mask else '(없음)'
+            if self.mask else '(비활성)'
         )
         self.get_logger().info(
-            f"scan_processor 시작: /scan_raw → /scan\n"
+            f"scan_processor 시작: /scan → /scan_filtered\n"
             f"  flip_180        : {self.flip}\n"
             f"  mask_ranges_deg : {mask_str}\n"
             f"  min_valid_range : {self.min_valid} m\n"
@@ -194,8 +213,7 @@ class ScanProcessor(Node):
     def _log_stats(self):
         if self.n_scans == 0:
             self.get_logger().warn(
-                "/scan_raw 메시지 수신 없음 - bringup 의 remap 또는 "
-                "lidar 노드 확인")
+                "/scan 메시지 수신 없음 - bringup 또는 lidar 노드 확인")
             return
         n = self.n_points_total
         pct_a = 100.0 * self.n_points_masked_angle / n if n else 0.0
