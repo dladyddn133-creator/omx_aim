@@ -119,7 +119,7 @@ fire:
   gripper_open_duration: 0.3    # 열기 동작 시간
   
   # 격발 후 cooldown
-  cooldown_sec: 1.5             # 격발 후 home + 대기
+  cooldown_sec: 3.0             # 격발 후 home + 대기
   lost_timeout_sec: 1.5
 # ===========================================================
 # Auto-track (자율 검출)
