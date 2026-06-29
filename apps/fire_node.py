@@ -48,7 +48,7 @@ class FireNode(Node):
         # ---------- Parameters ----------
         self.declare_parameter('pin', 31)
         self.declare_parameter('fire_duration_sec', 1.5)
-        self.declare_parameter('cooldown_sec', 1.5)
+        self.declare_parameter('cooldown_sec', 3.0)
         self.declare_parameter('active_state', 'HIGH')
         self.declare_parameter('start_disabled', False)
         self.declare_parameter('dry_run', False)
