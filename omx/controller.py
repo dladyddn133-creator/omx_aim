@@ -246,7 +246,7 @@ class OmxController:
             self._log("[dry-run] 격발 신호 시뮬레이션")
         else:
             self._log("격발 신호 발사 (외부 MCU 처리)")
-        time.sleep(0.5)
+        # time.sleep(0.5)
 
     # ----- 상태 조회 -----
 

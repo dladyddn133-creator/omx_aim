@@ -103,7 +103,7 @@ yolo:
   target_class: 1           # 67=cell phone, 39=bottle, 41=cup, 0=person, 47=apple
   conf_threshold: 0.5        # 0.0~1.0. 낮을수록 더 많이 검출 (오검출 늘어남)
   imgsz: 640                 # 추론 해상도. 320 = 빠름, 640 = 기본, 1280 = 정확
- 
+
 # ===========================================================
 # 격발 & 상태 머신
 # ===========================================================
@@ -112,14 +112,21 @@ fire:
   hold_time_sec: 0.5            # deadband 안 유지 시간
   confirm_deadband_scale: 1.0   # IBVS deadband 의 N배 (1.0 = 같음, 더 좁게 하려면 0.5)
   aim_settle_sec: 0.7
+
+  # 격발 펄스 동안 조준 유지 시간 (fire_node 의 fire_duration_sec 와 일치 권장)
+  # 이 시간 동안 OMX 는 조준 자세를 유지하고, 끝나면 home 으로 복귀.
+  # cooldown_sec 보다 작아야 의미 있음.
+  fire_pulse_sec: 1.5
+
   # 격발 동작 (gripper 시뮬레이션)
   gripper_close_pos: 1000       # 격발 시 gripper raw tick
   gripper_open_pos: 3217        # 격발 후 위치 (보통 home 값)
   gripper_close_duration: 0.3   # 닫기 동작 시간
   gripper_open_duration: 0.3    # 열기 동작 시간
-  
-  # 격발 후 cooldown
-  cooldown_sec: 3.0             # 격발 후 home + 대기
+
+  # 격발 후 cooldown (FIRING 진입 후 총 휴지 시간)
+  # 흐름: fire_pulse_sec 동안 조준 유지 → home 이동 → 나머지 시간 휴지 → IDLE
+  cooldown_sec: 3.0
   lost_timeout_sec: 1.5
 # ===========================================================
 # Auto-track (자율 검출)

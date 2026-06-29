@@ -50,6 +50,7 @@ class StateMachine:
         self.confirm_progress: float = 0.0
         self.cooldown_until: float = 0.0
         self.cooldown_home_sent: bool = False
+        self.fire_start_t: float = 0.0     # 격발 펄스 시작 시각 (home 지연용)
         self.lost_start_t: float = 0.0
 
         self.armed = cfg.autotrack.default_armed if cfg.autotrack else False
@@ -446,6 +447,7 @@ class StateMachine:
 
         elif self.state == State.FIRING:
             action['action'] = 'fire'
+            self.fire_start_t = now    # 격발 펄스 시작 (home 지연 기준)
             self.transition(State.COOLDOWN)
             self.cooldown_until = now + self.cfg.fire.cooldown_sec
             self.cooldown_home_sent = False
@@ -677,9 +679,15 @@ class StateMachine:
             self.cooldown_home_sent = False
             self._on_focus_done()
         else:
-            if not self.cooldown_home_sent:
+            # 격발 펄스가 끝날 때까지 조준 유지 → 그 후 home.
+            # fire_node 의 GPIO HIGH 펄스(fire_duration_sec)와 맞춰서
+            # 발사 중에 팔이 빠져나가지 않도록 함.
+            fire_pulse = self.cfg.fire.fire_pulse_sec
+            pulse_elapsed = now - self.fire_start_t
+            if not self.cooldown_home_sent and pulse_elapsed >= fire_pulse:
                 action['action'] = 'home'
                 self.cooldown_home_sent = True
+                self._log(f"격발 펄스 종료 ({pulse_elapsed:.2f}s) -> home")
 
     # ----- focus 완료 처리 -----
 
