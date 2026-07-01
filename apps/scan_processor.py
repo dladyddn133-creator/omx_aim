@@ -55,7 +55,7 @@ from sensor_msgs.msg import LaserScan
 # ============================================================
 DEFAULTS = {
     'flip_180': False,                                       # 라이다 정방향 부착됨
-    'mask_ranges_deg': [32.7, 40.2, -40.2, -32.7],           # 좌우 자기 구조물
+    'mask_ranges_deg': [32.7, 40.2, 145.0, 156.0, -157.0, -147.0, -40.2, -32.7],           # 좌우 자기 구조물
     'min_valid_range': 0.22,                                 # 22cm 이내 무시
     'max_valid_range': 0.0,                                  # 비활성
     'log_period_sec': 5.0,                                   # 5초마다 통계
