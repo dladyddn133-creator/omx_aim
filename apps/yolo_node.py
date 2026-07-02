@@ -828,7 +828,14 @@ class OmxYoloNode(Node):
             self.get_logger().warn("프레임 읽기 실패")
             return
 
-        detected, error_norm, bbox, conf = self.detector.detect(frame)
+        # 격발 후 COOLDOWN 동안엔 YOLO detect 스킵.
+        # 화면/스트림(read_frame·visualize·debug_stream)은 계속 흐르되,
+        # 재검출로 인한 조기 재격발을 막는다.
+        # COOLDOWN 은 detect 결과(detected·error_norm)를 쓰지 않으므로 안전.
+        if self.sm.state == State.COOLDOWN:
+            detected, error_norm, bbox, conf = False, None, None, None
+        else:
+            detected, error_norm, bbox, conf = self.detector.detect(frame)
 
         now = time.time()
         action = self.sm.update(detected, error_norm, now)

@@ -91,10 +91,9 @@ class OmxController:
         home = self.cfg.calibration.home
         for m in MOTOR_ORDER:
             self.bus.write("Goal_Position", m, home[m], normalize=False)
-        time.sleep(2.0)
         self.yaw = 0.0
         self.pitch = 0.0
-        self._log("Home 도달")
+        self._log("Home 명령 전송 (non-blocking)")
 
     # ----- 조준 -----
 
