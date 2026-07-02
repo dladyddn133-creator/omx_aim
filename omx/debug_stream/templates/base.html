@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>OMX Debug</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: #0e0e0e;
+      color: #ddd;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    nav {
+      background: #1a1a1a;
+      padding: 0.6em 1.2em;
+      border-bottom: 1px solid #2a2a2a;
+      display: flex;
+      align-items: center;
+    }
+    nav .title {
+      font-weight: 700;
+      margin-right: 2em;
+      color: #fff;
+    }
+    nav a {
+      color: #888;
+      margin-right: 1.2em;
+      text-decoration: none;
+      cursor: pointer;
+      padding: 0.3em 0;
+    }
+    nav a:hover { color: #ccc; }
+    nav a.active {
+      color: #fff;
+      border-bottom: 2px solid #4af;
+    }
+    nav .conn {
+      margin-left: auto;
+      font-size: 0.85em;
+      color: #666;
+    }
+    nav .conn.live { color: #6c4; }
+    #content { padding: 1.2em; }
+    .tab { display: none; }
+    .tab.active { display: block; }
+
+    /* Live tab */
+    .live-meta {
+      display: flex;
+      gap: 1.2em;
+      margin-bottom: 1em;
+      align-items: center;
+      font-size: 0.95em;
+    }
+    .live-meta .label { color: #888; }
+    .badge {
+      display: inline-block;
+      padding: 0.25em 0.7em;
+      border-radius: 4px;
+      background: #2a2a2a;
+      font-weight: 600;
+      font-size: 0.85em;
+    }
+    .badge.armed { background: #5a4; color: #000; }
+    .badge.disarmed { background: #444; color: #aaa; }
+    .state-pill {
+      display: inline-block;
+      padding: 0.2em 0.7em;
+      border-radius: 3px;
+      background: #2a3a4a;
+      color: #fff;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    img.stream {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 4px;
+      background: #000;
+    }
+
+    /* Ops tab */
+    pre.raw {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      padding: 1em;
+      border-radius: 4px;
+      font-size: 0.85em;
+      line-height: 1.4;
+      max-height: 70vh;
+      overflow: auto;
+    }
+    .placeholder {
+      color: #666;
+      font-style: italic;
+      margin-bottom: 1em;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="title">OMX Debug</span>
+    <a id="tab-live" class="active" onclick="show('live')">Live</a>
+    <a id="tab-ops" onclick="show('ops')">Ops</a>
+    <span id="conn" class="conn">연결 안 됨</span>
+  </nav>
+
+  <div id="content">
+    <!-- Live -->
+    <div id="live" class="tab active">
+      <div class="live-meta">
+        <span class="state-pill" id="state-pill">—</span>
+        <span id="armed-badge" class="badge disarmed">—</span>
+        <span><span class="label">FPS:</span> <span id="fps">—</span></span>
+        <span><span class="label">Queue:</span>
+          m<span id="qm">0</span> / b<span id="qb">0</span></span>
+        <span id="confirm-info" style="display:none">
+          <span class="label">AIM:</span> <span id="confirm-pct">0</span>%
+        </span>
+      </div>
+      <img class="stream" src="/stream.mjpg" alt="MJPEG stream">
+    </div>
+
+    <!-- Ops (placeholder for 2차) -->
+    <div id="ops" class="tab">
+      <p class="placeholder">
+        Ops 콘솔 — 2차 슬라이스에서 큐 테이블, IBVS 차트, 제어 버튼 추가 예정.
+        지금은 SSE 로 받는 raw state dump:
+      </p>
+      <pre class="raw" id="raw-state">(아직 데이터 없음)</pre>
+    </div>
+  </div>
+
+  <script>
+    function show(name) {
+      document.querySelectorAll('.tab').forEach(el =>
+        el.classList.remove('active'));
+      document.getElementById(name).classList.add('active');
+      document.querySelectorAll('nav a').forEach(el =>
+        el.classList.remove('active'));
+      document.getElementById('tab-' + name).classList.add('active');
+    }
+
+    const conn = document.getElementById('conn');
+    const statePill = document.getElementById('state-pill');
+    const armedBadge = document.getElementById('armed-badge');
+    const fpsEl = document.getElementById('fps');
+    const qm = document.getElementById('qm');
+    const qb = document.getElementById('qb');
+    const confirmInfo = document.getElementById('confirm-info');
+    const confirmPct = document.getElementById('confirm-pct');
+    const raw = document.getElementById('raw-state');
+
+    // state → 색상 매핑 (OpenCV 시각화와 동일)
+    const stateColors = {
+      idle: '#444', aiming: '#a82', scanning: '#5a5',
+      tracking: '#4a4', confirming: '#c84', firing: '#c33',
+      cooldown: '#a4a', waiting_nav: '#48a',
+    };
+
+    function applyState(s) {
+      // state pill
+      const st = (s.state || '').toLowerCase();
+      statePill.textContent = st.toUpperCase() || '—';
+      statePill.style.background = stateColors[st] || '#333';
+
+      // armed badge
+      const armed = !!s.armed;
+      armedBadge.textContent = armed ? 'ARMED' : 'DISARMED';
+      armedBadge.className = 'badge ' + (armed ? 'armed' : 'disarmed');
+
+      // fps + queue
+      fpsEl.textContent = (s.fps ?? 0).toFixed(1);
+      qm.textContent = s.main_queue_size ?? 0;
+      qb.textContent = s.boundary_queue_size ?? 0;
+
+      // confirm progress (CONFIRMING 일 때만 표시)
+      const cp = s.confirm_progress ?? 0;
+      if (cp > 0) {
+        confirmInfo.style.display = '';
+        confirmPct.textContent = (cp * 100).toFixed(0);
+      } else {
+        confirmInfo.style.display = 'none';
+      }
+
+      // raw dump
+      raw.textContent = JSON.stringify(s, null, 2);
+    }
+
+    const es = new EventSource('/events');
+    es.onopen = () => {
+      conn.textContent = '● live';
+      conn.className = 'conn live';
+    };
+    es.onerror = () => {
+      conn.textContent = '재연결 중...';
+      conn.className = 'conn';
+    };
+    es.onmessage = (e) => {
+      try {
+        applyState(JSON.parse(e.data));
+      } catch (err) {
+        console.warn('SSE parse error:', err);
+      }
+    };
+  </script>
+</body>
+</html>

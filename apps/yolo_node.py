@@ -900,6 +900,7 @@ class OmxYoloNode(Node):
             self.visualize(frame, detected, error_norm, bbox, conf, action)
             if self.debug_stream is not None:
                 self.debug_stream.update(frame)
+                self.debug_stream.update_state(self._make_snapshot(action, error_norm))
 
         # 표시: GUI 가 있을 때만
         if not self.no_display:
@@ -912,6 +913,38 @@ class OmxYoloNode(Node):
             self.fps_disp = self.fps_n / (now - self.fps_t)
             self.fps_t = now
             self.fps_n = 0
+    
+    def _make_snapshot(self, action, error_norm) -> dict:
+        """SSE 로 보낼 상태 스냅샷.
+
+        가벼운 dict 만 만들기 - 직렬화는 Flask 스레드가 함.
+        """
+        def entry_dict(e):
+            if e is None:
+                return None
+            return {
+                'priority': e.priority,
+                'type': e.target_type.name,
+                'coord': [round(c, 3) for c in e.coord_map],
+                'distance': round(e.distance, 3),
+            }
+
+        return {
+            'ts': time.time(),
+            'state': self.sm.state.value,
+            'armed': self.sm.armed,
+            'paused': self.paused,
+            'fps': round(self.fps_disp, 1),
+            'confirm_progress': round(action.get('confirm_progress', 0.0), 3),
+            'ibvs_error': ([round(error_norm[0], 3), round(error_norm[1], 3)]
+                        if error_norm else None),
+            'current_parent': entry_dict(self.sm.current_parent),
+            'current_focus': entry_dict(self.sm.current_focus),
+            'main_queue': [entry_dict(e) for e in self.sm.main_queue],
+            'boundary_queue': [entry_dict(e) for e in self.sm.boundary_queue],
+            'main_queue_size': len(self.sm.main_queue),
+            'boundary_queue_size': len(self.sm.boundary_queue),
+        }
 
     def visualize(self, frame, detected, error_norm, bbox, conf, action):
         h, w = frame.shape[:2]
