@@ -20,10 +20,10 @@ def generate_launch_description():
 
     return LaunchDescription([
         scout_watchdog_arg,
-        Node(
-            package='omx_aim', executable='map_relay', name='map_relay',
-            output='screen',
-        ),
+        # Node(
+        #     package='omx_aim', executable='map_relay', name='map_relay',
+        #     output='screen',
+        # ),
         Node(
             package='omx_aim', executable='patrol_planner', name='patrol_planner',
             output='screen',
@@ -32,9 +32,9 @@ def generate_launch_description():
             package='omx_aim', executable='auto_initialpose', name='auto_initialpose',
             output='screen',
         ),
-        Node(
-            package='omx_aim', executable='scout_watchdog', name='scout_watchdog',
-            output='screen',
-            condition=IfCondition(LaunchConfiguration('scout_watchdog')),
-        ),
+        # Node(
+        #     package='omx_aim', executable='scout_watchdog', name='scout_watchdog',
+        #     output='screen',
+        #     condition=IfCondition(LaunchConfiguration('scout_watchdog')),
+        # ),
     ])
