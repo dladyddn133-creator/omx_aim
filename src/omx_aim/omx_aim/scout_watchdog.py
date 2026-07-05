@@ -38,14 +38,10 @@ Burger 측에서 발행 필요:
 
 from __future__ import annotations
 
-import sys
 import math
 import time
-from pathlib import Path
 from enum import Enum
 from typing import Optional, List, Tuple
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import rclpy
 from rclpy.node import Node

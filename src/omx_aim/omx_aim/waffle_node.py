@@ -39,10 +39,6 @@ OMX yolo_node 가 발행한 /omx/nav_goal (VIEW_POSE) 을 Nav2 NavigateToPose
 from __future__ import annotations
 
 import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 import time
 from enum import Enum
 from typing import Optional

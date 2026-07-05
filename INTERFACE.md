@@ -72,38 +72,56 @@ graph TB
 
 ### 코드 모듈 구조
 
+레포 자체가 colcon 워크스페이스 (`colcon build` 를 `~/omx_aim` 에서 바로 실행). ROS 패키지 본체는 `src/omx_aim/`.
+
 ```
-~/omx_aim/
-├── config.yaml
-├── INTERFACE_v5.md
+~/omx_aim/                        # colcon 워크스페이스 루트
 ├── README.md
-├── omx/                      # 핵심 로직 (ROS 의존성 없음)
-│   ├── __init__.py
-│   ├── config.py             # dataclass + load_config
-│   ├── hardware.py           # 저수준 Dynamixel
-│   ├── types.py              # State, TargetType, LOSResult, TargetEntry
-│   ├── state_machine.py      # StateMachine
-│   ├── boundary_gen.py       # BoundaryGenerator
-│   ├── yolo_detector.py      # YoloDetector
-│   └── controller.py         # OmxController
-├── apps/                     # ROS 노드
-│   ├── yolo_node.py          # OmxYoloNode 메인
-│   ├── waffle_node.py        # Nav2 클라이언트
-│   ├── target_bridge.py      # 외부 좌표 통합
-│   ├── fire_node.py          # GPIO 격발 (신규)
-│   ├── map_relay.py          # Burger map relay (신규)
-│   ├── patrol_planner.py     # risk_map → PATROL (신규)
-│   ├── auto_initialpose.py   # 자동 initial pose (신규)
-│   ├── fake_risk_map.py      # Burger risk_map 시뮬 (신규)
-│   ├── fake_static_map.py    # Burger map 시뮬 (신규)
-│   ├── keyboard_teleop.py
-│   ├── aim_test.py
-│   └── track_test.py
-├── configs/
-│   └── scout_bridge.yaml     # domain_bridge 설정 (신규)
-└── models/
-    └── best.pt
+├── INTERFACE.md
+├── SETUP.md
+├── build/ install/ log/          # colcon 산출물 (gitignore)
+└── src/
+    └── omx_aim/                  # ROS 2 (ament_python) 패키지
+        ├── package.xml
+        ├── setup.py
+        ├── setup.cfg
+        ├── resource/omx_aim
+        ├── omx/                       # 핵심 로직 (ROS 의존성 없음)
+        │   ├── __init__.py
+        │   ├── config.py              # dataclass + load_config
+        │   ├── hardware.py            # 저수준 Dynamixel
+        │   ├── types.py               # State, TargetType, LOSResult, TargetEntry
+        │   ├── state_machine.py       # StateMachine
+        │   ├── boundary_gen.py        # BoundaryGenerator
+        │   ├── yolo_detector.py       # YoloDetector
+        │   ├── controller.py          # OmxController
+        │   └── debug_stream/          # Flask MJPEG 디버그 스트림
+        ├── omx_aim/                   # ROS 노드 + CLI (콘솔 스크립트)
+        │   ├── yolo_node.py           # OmxYoloNode 메인
+        │   ├── waffle_node.py         # Nav2 클라이언트
+        │   ├── target_bridge.py       # 외부 좌표 통합
+        │   ├── fire_node.py           # GPIO 격발
+        │   ├── map_relay.py           # Burger map relay
+        │   ├── patrol_planner.py      # risk_map → PATROL
+        │   ├── auto_initialpose.py    # 자동 initial pose
+        │   ├── scan_processor.py      # lidar 자기구조물 마스킹
+        │   ├── scan_diag.py           # lidar 진단 CLI
+        │   ├── scout_watchdog.py      # Burger heartbeat 감시
+        │   ├── fake_risk_map.py       # Burger risk_map 시뮬
+        │   ├── fake_static_map.py     # Burger map 시뮬
+        │   └── ik_teleop.py           # 좌표 조준 IK 인터랙티브 CLI (非 ROS)
+        ├── launch/
+        │   ├── desktop.launch.py      # map_relay + patrol_planner + auto_initialpose + scout_watchdog
+        │   ├── jetson.launch.py       # waffle_node + yolo_node + fire_node + target_bridge + scan_processor
+        │   └── sim.launch.py          # fake_static_map + fake_risk_map
+        ├── config/
+        │   ├── config.yaml
+        │   └── scout_bridge.yaml     # domain_bridge 설정
+        └── models/
+            └── best.pt
 ```
+
+실행 파일 이름은 모두 원래 파일명과 동일합니다 (예: `ros2 run omx_aim yolo_node`). config.yaml 은 `ament_index_python.packages.get_package_share_directory('omx_aim')` 로 자동 탐색되므로 `ros2 run`/`ros2 launch` 실행 시 cwd 에 무관하게 동작합니다 (`omx/config.py`).
 
 ---
 
@@ -311,7 +329,7 @@ cost = 1.0 * (costmap/100)
 ### 5.3 파라미터
 
 ```bash
-ros2 run patrol_planner --ros-args \
+ros2 run omx_aim patrol_planner --ros-args \
   -p min_risk:=40 \
   -p min_distance_m:=1.0 \
   -p max_candidates_per_cycle:=3 \
@@ -512,19 +530,26 @@ ros2 topic pub /omx/boundary_enable std_msgs/String "{data: 'all off'}" --once
 
 | 파일 | 책임 | 줄 수 |
 |---|---|---|
-| `omx/types.py` | enums + TargetEntry | 115 |
-| `omx/state_machine.py` | StateMachine | 700 |
-| `omx/boundary_gen.py` | BoundaryGenerator | 105 |
-| `omx/yolo_detector.py` | YOLO + cv2 | 93 |
-| `omx/controller.py` | OmxController + IBVS | 216 |
-| `apps/yolo_node.py` | OmxYoloNode | ~1080 |
-| `apps/waffle_node.py` | Nav2 어댑터 | 336 |
-| `apps/fire_node.py` | GPIO 격발 | 259 |
-| `apps/map_relay.py` | map relay | 85 |
-| `apps/patrol_planner.py` | NMS + decay | 457 |
-| `apps/auto_initialpose.py` | initial pose | 193 |
-| `apps/fake_risk_map.py` | risk_map 시뮬 | 130 |
-| `apps/fake_static_map.py` | map 시뮬 | 172 |
+| `omx/types.py` | enums + TargetEntry | 114 |
+| `omx/state_machine.py` | StateMachine | 714 |
+| `omx/boundary_gen.py` | BoundaryGenerator | 104 |
+| `omx/yolo_detector.py` | YOLO + cv2 | 92 |
+| `omx/controller.py` | OmxController + IBVS | 266 |
+| `omx/config.py` | dataclass + load_config | 251 |
+| `omx/hardware.py` | 저수준 Dynamixel | 61 |
+| `omx_aim/yolo_node.py` | OmxYoloNode | 1144 |
+| `omx_aim/scout_watchdog.py` | Burger heartbeat 감시 + 수색 TARGET | 523 |
+| `omx_aim/ik_teleop.py` | IK teleop CLI (구 `omx_aim.py`) | 355 |
+| `omx_aim/waffle_node.py` | Nav2 어댑터 | 330 |
+| `omx_aim/patrol_planner.py` | NMS + decay | 292 |
+| `omx_aim/fire_node.py` | GPIO 격발 | 258 |
+| `omx_aim/scan_processor.py` | lidar 자기구조물 마스킹 | 246 |
+| `omx_aim/auto_initialpose.py` | initial pose | 192 |
+| `omx_aim/target_bridge.py` | 외부 좌표 forward | 162 |
+| `omx_aim/fake_static_map.py` | map 시뮬 | 171 |
+| `omx_aim/fake_risk_map.py` | risk_map 시뮬 | 154 |
+| `omx_aim/scan_diag.py` | lidar 진단 CLI | 123 |
+| `omx_aim/map_relay.py` | map relay | 85 |
 
 ## 부록 B. 미해결 / 알려진 이슈
 

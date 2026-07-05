@@ -173,9 +173,21 @@ def find_config_path(path=None):
         return p
 
     here = Path(__file__).resolve()
-    candidates = [
+    candidates = []
+
+    # colcon install 후: share/omx_aim/config/config.yaml
+    try:
+        from ament_index_python.packages import get_package_share_directory
+        candidates.append(
+            Path(get_package_share_directory("omx_aim")) / "config" / "config.yaml"
+        )
+    except Exception:
+        pass
+
+    candidates += [
         Path.cwd() / "config.yaml",
-        here.parent.parent / "config.yaml",
+        # 소스 트리에서 직접 실행: src/omx_aim/config/config.yaml
+        here.parent.parent / "config" / "config.yaml",
     ]
     for c in candidates:
         if c.is_file():
@@ -231,5 +243,10 @@ def load_config(path=None):
         raise ValueError(
             f"Config 파일 형식 오류 ({config_path}): {e}"
         ) from e
+
+    # model_path 는 config.yaml 기준 상대경로 (share/config/../models/best.pt).
+    # ros2 run 은 cwd 가 정해져 있지 않으므로 cwd 기준 상대경로로 두면 안 됨.
+    if yolo_cfg is not None and yolo_cfg.model_path and not Path(yolo_cfg.model_path).is_absolute():
+        yolo_cfg.model_path = str((config_path.parent / yolo_cfg.model_path).resolve())
 
     return cfg

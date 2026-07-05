@@ -43,12 +43,23 @@ SLAM + risk_map                   domain_bridge                   yolo_node
 
 ## 빠른 시작
 
+### 빌드 (최초 1회 / 코드 변경 후)
+
+레포 자체가 colcon 워크스페이스이고, ROS 패키지는 `src/omx_aim/` 에 있습니다.
+
+```bash
+cd ~/omx_aim
+colcon build --symlink-install   # --symlink-install: config.yaml/launch 수정 후 재빌드 불필요
+source install/setup.bash
+```
+
 ### 환경 alias
 
 ```bash
 # Jetson
 alias omxenv='source /opt/ros/jazzy/setup.bash && \
               source ~/venv/omx_ros/bin/activate && \
+              source ~/omx_aim/install/setup.bash && \
               export ROS_DOMAIN_ID=20 && \
               cd ~/omx_aim'
 ```
@@ -57,16 +68,15 @@ alias omxenv='source /opt/ros/jazzy/setup.bash && \
 
 ```bash
 # 1. Domain bridge (Burger 와 통신)
-ros2 run domain_bridge domain_bridge configs/scout_bridge.yaml
+ros2 run domain_bridge domain_bridge src/omx_aim/config/scout_bridge.yaml
 
-# 2. Map relay
-python3 apps/map_relay.py
+# 2~4. map_relay + patrol_planner + auto_initialpose 한 번에
+ros2 launch omx_aim desktop.launch.py
 
-# 3. Patrol planner
-python3 apps/patrol_planner.py
-
-# 4. Auto initial pose
-python3 apps/auto_initialpose.py
+# (개별 실행 원하면)
+# ros2 run omx_aim map_relay
+# ros2 run omx_aim patrol_planner
+# ros2 run omx_aim auto_initialpose
 
 # 5. Nav2 (와플 켜진 후)
 export TURTLEBOT3_MODEL=waffle_pi
@@ -86,14 +96,11 @@ export TURTLEBOT3_MODEL=waffle_pi
 ros2 launch turtlebot3_bringup robot.launch.py
 ros2 service call /motor_power std_srvs/srv/SetBool "{data: true}"
 
-# 2. waffle_node
-python3 apps/waffle_node.py
+# 2~4. waffle_node + yolo_node(--no-display) + fire_node + target_bridge + scan_processor 한 번에
+ros2 launch omx_aim jetson.launch.py
 
-# 3. yolo_node
-python3 apps/yolo_node.py --no-display
-
-# 4. fire_node
-python3 apps/fire_node.py
+# (개별 실행 / 디버그 스트림 등 옵션 필요하면)
+# ros2 run omx_aim yolo_node --no-display --debug-stream
 ```
 
 ### 시뮬 (Burger 없이)
@@ -101,8 +108,11 @@ python3 apps/fire_node.py
 Burger 가 없으면 가짜 map + risk_map 발행:
 
 ```bash
-python3 apps/fake_static_map.py     # /scout/map 시뮬
-python3 apps/fake_risk_map.py       # /scout/risk_map 시뮬
+ros2 launch omx_aim sim.launch.py
+
+# (개별 실행)
+# ros2 run omx_aim fake_static_map     # /scout/map 시뮬
+# ros2 run omx_aim fake_risk_map       # /scout/risk_map 시뮬
 ```
 
 ### 좌표 발행

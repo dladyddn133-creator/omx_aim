@@ -48,7 +48,7 @@ python3 -c "import rclpy; print('OK')"
 매번 ROS + venv 활성화를 한 줄로:
 
 ```bash
-echo "alias omxenv='source /opt/ros/jazzy/setup.bash && source ~/venv/omx_ros/bin/activate && cd ~/omx_aim'" >> ~/.bashrc
+echo "alias omxenv='source /opt/ros/jazzy/setup.bash && source ~/venv/omx_ros/bin/activate && [ -f ~/omx_aim/install/setup.bash ] && source ~/omx_aim/install/setup.bash; cd ~/omx_aim'" >> ~/.bashrc
 source ~/.bashrc
 
 # 사용
@@ -105,12 +105,18 @@ Torch: 2.x.x | CUDA: True
 
 ---
 
-## 5. 코드 가져오기
+## 5. 코드 가져오기 + 빌드
+
+레포 자체가 colcon 워크스페이스이고, ROS 패키지는 `src/omx_aim/` 에 있습니다.
 
 ```bash
 cd ~
 git clone https://github.com/dladyddn133-creator/omx_aim.git
 cd omx_aim
+
+# 빌드 (--symlink-install: config.yaml/launch 수정 시 재빌드 불필요)
+colcon build --symlink-install
+source install/setup.bash
 
 # 동작 확인
 python3 -c "from omx.hardware import build_bus; from omx.config import load_config; cfg = load_config(); print('Config:', cfg.motor.port)"
@@ -235,17 +241,11 @@ OMX 연결 OK
 ```bash
 omxenv
 
-# 키보드 teleop (가장 단순)
-python3 apps/keyboard_teleop.py
+# 좌표 조준 인터랙티브 (모터 없이 IK 계산만)
+ros2 run omx_aim ik_teleop --dry-run
 
-# 좌표 조준 (dry-run)
-python3 apps/aim_test.py --dry-run
-
-# YOLO 추적 (dry-run)
-python3 apps/yolo_test.py --dry-run
-
-# ROS 노드 (dry-run)
-python3 apps/yolo_node.py --dry-run
+# ROS 노드 (dry-run, OMX 없이 카메라 + 검출만)
+ros2 run omx_aim yolo_node --dry-run
 ```
 
 다른 터미널에서:
@@ -356,7 +356,7 @@ OMX 팔을 분해 또는 모터 펌웨어 리셋했다면 캘리브 다시:
 omxenv
 
 # 팔을 "곧게 정면 수평" 자세로 손으로 옮긴 뒤
-python3 apps/aim_test.py --measure-home
+ros2 run omx_aim ik_teleop --measure-home
 ```
 
 출력된 raw tick 값들을 `config.yaml` 의 `calibration.home` 에 복사:
@@ -403,8 +403,9 @@ calibration:
 - [ ] alias `omxenv` 추가
 - [ ] 의존성 설치 (lerobot, ultralytics, opencv, PyYAML, dynamixel-sdk, numpy<2.0)
 - [ ] 코드 clone (`~/omx_aim`)
+- [ ] `colcon build --symlink-install` + `source install/setup.bash`
 - [ ] dialout 그룹 권한
 - [ ] USB 디바이스 정보 확인
 - [ ] udev rule 생성 → `/dev/omx_follower` 심볼릭 링크
-- [ ] `python3 apps/keyboard_teleop.py` 동작 확인
+- [ ] `ros2 run omx_aim ik_teleop --dry-run` 동작 확인
 - [ ] ROS 노드 동작 확인 (`ros2 node list` 에 `/omx_yolo_node`)

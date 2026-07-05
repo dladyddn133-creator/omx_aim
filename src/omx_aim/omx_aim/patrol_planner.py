@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Patrol Planner — risk_map 기반 PATROL 좌표 자동 생성.
 
-Burger 가 발행한 /scout/risk_map (0~100 위험도) 위에서 NMS 로 hotspot 추출,
+Burger 가 발행한 /risk/risk_map (0~100 위험도) 위에서 NMS 로 hotspot 추출,
 주기적으로 /omx/patrol_in_map 으로 발행.
 
 알고리즘:
@@ -11,12 +11,12 @@ Burger 가 발행한 /scout/risk_map (0~100 위험도) 위에서 NMS 로 hotspot
     4. top max_candidates 선택 → 발행
 
 토픽:
-    Sub:  /scout/risk_map         nav_msgs/OccupancyGrid
+    Sub:  /risk/risk_map         nav_msgs/OccupancyGrid
     Pub:  /omx/patrol_in_map      geometry_msgs/PointStamped
     Pub:  /patrol_planner/markers visualization_msgs/MarkerArray (RViz)
 
 파라미터:
-    risk_topic                /scout/risk_map
+    risk_topic                /risk/risk_map
     patrol_topic              /omx/patrol_in_map
     min_risk                  40       # 이 이상만 후보
     min_distance_m            1.0      # NMS: 후보 간 최소 거리
@@ -28,11 +28,6 @@ Burger 가 발행한 /scout/risk_map (0~100 위험도) 위에서 NMS 로 hotspot
 """
 
 from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import math
 from typing import Optional
@@ -52,7 +47,7 @@ class PatrolPlanner(Node):
         super().__init__('patrol_planner')
 
         # ---------- Parameters ----------
-        self.declare_parameter('risk_topic', '/scout/risk_map')
+        self.declare_parameter('risk_topic', '/risk/risk_map')
         self.declare_parameter('patrol_topic', '/omx/patrol_in_map')
         self.declare_parameter('min_risk', 40)
         self.declare_parameter('min_distance_m', 1.0)
