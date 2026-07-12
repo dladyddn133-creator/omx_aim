@@ -41,6 +41,7 @@ setup(
             'fake_risk_map = omx_aim.fake_risk_map:main',
             'fake_static_map = omx_aim.fake_static_map:main',
             'ik_teleop = omx_aim.ik_teleop:main',
+            'odom_calib = omx_aim.odom_calib:main',
         ],
     },
 )
