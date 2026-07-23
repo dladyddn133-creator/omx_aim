@@ -1,0 +1,36 @@
+# =========================================================================
+#  OMX Aim - JetPack 7.2 known-good dependencies
+# =========================================================================
+#  Platform: Jetson Orin Nano
+#           JetPack 7.2 (L4T 39.2.0) / Ubuntu 24.04 / CUDA 13.2 / Python 3.12
+#
+#  Install command:
+#     pip install -r requirements.jetpack72.lock \
+#       --index-url https://download.pytorch.org/whl/cu132 \
+#       --extra-index-url https://pypi.org/simple
+#
+#  ⚠️ 주의:
+#   - 실제 젯슨 접근 시 아래 명령으로 갱신 필요:
+#         omxenv && pip freeze > requirements.jetpack72.lock
+#   - torch/torchvision은 반드시 --index-url https://download.pytorch.org/whl/cu132
+#   - numpy는 반드시 1.x (Ubuntu 24.04 시스템 matplotlib/OpenCV 호환)
+#   - pip OpenCV는 절대 설치하지 말 것 (JetPack의 CUDA-OpenCV를
+#     --system-site-packages 로 상속받음)
+# =========================================================================
+
+# --- PyTorch (CUDA 13.2 SBSA wheel) ---
+torch==2.12.0+cu132
+torchvision==0.27.0+cu132
+
+# --- NumPy (반드시 1.x) ---
+numpy<2.0
+
+# --- Computer Vision / ML ---
+ultralytics==8.4.65
+
+# --- Robotics ---
+lerobot==0.5.1
+dynamixel-sdk
+
+# --- Config / IO ---
+PyYAML==6.0.1
