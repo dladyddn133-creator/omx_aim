@@ -1,10 +1,76 @@
-# OMX Auto-Aim
+# OMX Auto-Aim Subsystem
 
-OpenManipulator-X 기반 자동 조준 시스템. TurtleBot3 Burger(정찰) + Waffle(사격) 협력 + OMX 4-DOF 팔 + Jetson Orin Nano + ROS 2 Jazzy.
+<div align="center">
 
-Burger 가 SLAM 으로 맵과 위험도를 만들고, Waffle 이 그 정보로 정찰 → 자동 조준 → 격발까지 수행하는 정찰-대응 시스템.
+**Custom YOLO11n과 IBVS를 이용한  
+OpenManipulator-X 자동 조준 및 안전 타격 시스템**
 
-> **프로젝트 종료.** 코드는 커밋 `4810692` 에서 동결되었으며, 이 저장소는 기록 보관용이다.
+<br>
+
+![ROS2](https://img.shields.io/badge/ROS_2-Jazzy-22314E?style=flat-square&logo=ros&logoColor=white)
+![YOLO](https://img.shields.io/badge/YOLO-11n-00FFFF?style=flat-square)
+![Jetson](https://img.shields.io/badge/Jetson-Orin_Nano-76B900?style=flat-square&logo=nvidia&logoColor=white)
+![Control](https://img.shields.io/badge/Control-IBVS_PD-orange?style=flat-square)
+![Robot Arm](https://img.shields.io/badge/Robot_Arm-OpenManipulator--X-blue?style=flat-square)
+
+</div>
+
+> [!NOTE]
+> 이 저장소는  
+> [ROS 2 Multi-Robot Autonomous Exploration & Response System](https://github.com/dladyddn133-creator/ROS2-Project)의  
+> **Leader Waffle 자동 조준 및 타격 서브시스템**을 상세하게 정리한 저장소입니다.
+
+---
+
+## Demo
+
+<div align="center">
+
+[![YOLO11n and IBVS Auto-Aim Demo](docs/media/ibvs_thumbnail.jpg)](https://youtu.be/t03m8PHifMo)
+
+<br>
+
+[▶ 전체 IBVS 자동 조준 및 타격 영상 보기](https://youtu.be/t03m8PHifMo)
+
+</div>
+
+> **Control flow:**  
+> 위험 좌표 수신 → Point-at IK 개략 조준 → YOLO11n 표적 검출 →  
+> IBVS PD 정밀 제어 → 안정성 확인 → GPIO 타격 → Home 복귀
+
+---
+
+## Overview
+
+`OMX Auto-Aim`은 Leader Waffle에 장착된 OpenManipulator-X가  
+지도상 위험 좌표를 전달받아 표적을 탐색하고, 영상 기반 제어를 통해 정밀하게 조준한 뒤 안전 조건을 확인하여 타격하는 ROS 2 서브시스템입니다.
+
+지도 좌표를 이용한 **Point-at IK 개략 조준**과 카메라 영상을 이용한  
+**YOLO11n + IBVS 정밀 조준**을 결합했습니다.
+
+또한 긴급 표적 선점, 조준 위치 재탐색, Deadband 안정성 확인,  
+Cooldown 및 타격 비활성화 기능을 상태 머신에 통합했습니다.
+
+### Core Pipeline
+
+```text
+Target Coordinate in Map
+        ↓
+Target Priority Queue
+        ↓
+Nav2 Positioning / View Pose
+        ↓
+Point-at IK
+        ↓
+Custom YOLO11n Detection
+        ↓
+IBVS Pan / Tilt PD Control
+        ↓
+Target Stability Confirmation
+        ↓
+GPIO Firing
+        ↓
+Cooldown and Home Position
 
 ---
 
