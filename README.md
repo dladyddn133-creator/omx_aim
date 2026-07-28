@@ -71,6 +71,7 @@ Target Stability Confirmation
 GPIO Firing
         ↓
 Cooldown and Home Position
+```
 
 ---
 
