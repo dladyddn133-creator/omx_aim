@@ -129,7 +129,12 @@ heartbeat + pose                auto_initialpose             waffle_node
 
 ---
 
-## 빠른 시작
+## Build and Run
+
+<details>
+<summary><strong>설치 및 실행 명령어 펼쳐보기</strong></summary>
+
+<br>
 
 ### 빌드
 
@@ -222,6 +227,7 @@ ros2 topic pub /omx/fire_disable std_msgs/Bool "{data: true}" --once
 ```
 
 RViz 의 `Publish Point`(P 키)로 맵을 클릭해도 TARGET 으로 들어간다.
+</details>
 
 ---
 
