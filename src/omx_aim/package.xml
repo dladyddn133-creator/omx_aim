@@ -5,7 +5,7 @@
   <version>0.1.0</version>
   <description>OpenManipulator-X 기반 자동 조준 시스템. TurtleBot3 Burger(정찰) + Waffle(사격) + OMX 4-DOF 팔.</description>
   <maintainer email="dladyddn133@gmail.com">dladyddn133-creator</maintainer>
-  <license>TODO: License declaration</license>
+  <license>MIT</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>action_msgs</exec_depend>
