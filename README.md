@@ -129,6 +129,78 @@ heartbeat + pose                auto_initialpose             waffle_node
 
 ---
 
+---
+
+## Tech Stack
+
+| Category | Technologies |
+|---|---|
+| **Robotics** | ROS 2 Jazzy, TurtleBot3 Waffle, OpenManipulator-X |
+| **Vision AI** | Custom YOLO11n, Ultralytics, OpenCV, PyTorch |
+| **Control** | IBVS, PD Control, Point-at IK, State Machine |
+| **Navigation** | Nav2, AMCL, TF2 |
+| **Embedded** | Jetson Orin Nano, Jetson.GPIO, Dynamixel |
+| **Communication** | ROS 2 Topics, DDS, ROS_DOMAIN_ID |
+| **Monitoring** | Flask, MJPEG, SSE |
+| **Language / Tools** | Python, Linux, Git, GitHub |
+
+---
+
+## Repository Structure
+
+```text
+omx_aim/
+├── README.md
+├── INTERFACE.md
+├── SETUP.md
+├── requirements.jetpack72.lock
+├── docs/
+│   └── media/
+│       └── ibvs_thumbnail.jpg
+└── src/
+    └── omx_aim/
+        ├── config/
+        │   └── config.yaml
+        ├── launch/
+        │   ├── jetson.launch.py
+        │   ├── desktop.launch.py
+        │   └── sim.launch.py
+        ├── models/
+        │   └── best.pt
+        ├── omx/
+        │   ├── priority queue
+        │   ├── state machine
+        │   ├── Point-at IK
+        │   └── IBVS control
+        ├── omx_aim/
+        │   ├── waffle_node
+        │   ├── yolo_node
+        │   ├── fire_node
+        │   ├── target_bridge
+        │   ├── scan_processor
+        │   └── patrol_planner
+        ├── package.xml
+        └── setup.py
+```
+
+### Main Components
+
+| Component | Role |
+|---|---|
+| `waffle_node` | 좌표 작업 큐와 전체 자동 조준 상태 머신 관리 |
+| `yolo_node` | 카메라 입력, YOLO11n 추론 및 표적 중심 좌표 계산 |
+| `target_bridge` | 지도상의 표적 좌표를 OMX 작업으로 변환 |
+| `scan_processor` | LiDAR 및 주변 장애물 정보를 이용한 시야 판단 |
+| `patrol_planner` | Risk Map에서 순찰 후보 위치 생성 |
+| `fire_node` | GPIO 타격 펄스 출력과 안전 잠금 처리 |
+| `map_relay` | Scout 지도를 Leader의 Nav2 입력 지도로 전달 |
+| `scout_watchdog` | Scout heartbeat 감시 및 장애 발생 시 수색 좌표 생성 |
+
+> YOLO 가중치 `best.pt`는 용량 문제로 저장소에 포함하지 않으며,  
+> 실행 시 `src/omx_aim/models/` 경로에 별도로 배치해야 합니다.
+
+---
+
 ## Build and Run
 
 <details>
