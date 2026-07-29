@@ -282,30 +282,64 @@ RViz 의 `Publish Point`(P 키)로 맵을 클릭해도 TARGET 으로 들어간�
 
 ---
 
-## 진화 단계
+## Engineering Evolution
 
-| Stage | 내용 |
+프로젝트를 실제 로봇에 적용하면서 발생한 문제를 분석하고,  
+제어 구조와 소프트웨어 아키텍처를 단계적으로 개선했습니다.
+
+| Problem | Improvement | Result |
+|---|---|---|
+| 하나의 노드에 이동·조준·타격 로직이 집중됨 | `waffle_node`와 OMX 제어 모듈을 분리 | 이동 제어와 로봇팔 제어의 책임 분리 |
+| 현재 위치에서 로봇팔이 표적을 볼 수 없는 상황 발생 | `CHECK_VIEW`와 `VIEW_POSE` 상태 추가 | 조준 가능한 위치로 자동 재이동 |
+| 단일 View Pose만으로는 장애물과 Costmap 대응이 어려움 | 표적 주변 12개 후보 위치 생성 및 Cost 평가 | 이동 가능한 조준 위치를 자동 선택 |
+| 순찰 중 긴급 표적이 입력되면 대응이 지연됨 | TARGET 우선순위와 작업 선점 기능 적용 | 진행 중인 PATROL 작업을 중단하고 표적 우선 대응 |
+| 실제 OMX 관절 방향과 계산 결과가 일치하지 않음 | 관절별 Motor Sign과 조준 방향 보정 | 실물 로봇 기준 Pan/Tilt 제어 안정화 |
+| 화면 중심 기준 Deadband가 좌우·상하에서 동일하게 동작하지 않음 | 비대칭 Deadband와 PD Gain 개별 튜닝 | 표적 중심 정렬 시 진동과 과도 응답 감소 |
+| 타격 신호 발생 직후 로봇팔이 먼저 Home으로 복귀함 | 타격 Pulse 동안 조준 자세 유지 | 타격 동작 완료 후 안전하게 Home 복귀 |
+| SSH 환경에서 카메라와 상태 확인이 어려움 | Flask MJPEG 및 SSE 대시보드 구현 | 원격 환경에서 영상과 상태 머신 실시간 확인 |
+
+### Architecture Refactoring
+
+초기에는 ROS 2 노드와 제어 알고리즘이 강하게 결합되어 있었지만,  
+개발 과정에서 다음과 같이 구조를 분리했습니다.
+
+```text
+ROS 2 Interface Layer
+    ├── Topic Subscription / Publication
+    ├── TF and Coordinate Conversion
+    ├── Nav2 Integration
+    └── Hardware Interface
+                ↓
+OMX Core Logic
+    ├── Priority Queue
+    ├── State Machine
+    ├── Point-at IK
+    ├── IBVS PD Control
+    └── Safety Conditions
+```
+
+이를 통해 ROS 2 통신 로직과 조준 알고리즘을 분리하고,  
+상태 머신과 제어 로직을 독립적으로 수정하고 검증할 수 있도록 구성했습니다.
+
+---
+
+## Known Limitations
+
+실물 로봇 시스템 특성상 다음과 같은 제약이 남아 있습니다.
+
+| Limitation | Cause and Consideration |
 |---|---|
-| A / D / F / G | 큐, LOS, 거리 정렬, RViz 시각화 |
-| H1 | waffle_node 분리 |
-| H2 | CHECK_VIEW + VIEW_POSE v1 + WAITING_NAV |
-| H3 | TARGET preempt + miss 알림 |
-| H4 | BoundaryGenerator sweep + TTL |
-| H5 | VIEW_POSE v2 (12 후보 + cost 평가) |
-| R1~R6 | 모듈 분리 (`omx/` 코어와 `omx_aim/` ROS 계층) |
-| Burger 통합 | map_relay + patrol_planner + auto_initialpose + scout_watchdog |
-| 격발 통합 | fire_node + GPIO + 안전 기능 |
-| 운영 보정 | motor sign 보정, deadband 비대칭, 2D 운영, fire_pulse 도입 |
-| 관측 | Flask 디버그 대시보드 (MJPEG + SSE) |
+| `patrol_planner` 중복 실행 가능성 | Jetson과 Desktop Launch에서 동시에 실행하면 동일 좌표가 중복 발행될 수 있으므로 한쪽에서만 실행해야 함 |
+| Desktop Launch 일부 노드 수동 실행 필요 | `desktop.launch.py`에서 일부 노드가 비활성화되어 있어 실행 구성을 확인해야 함 |
+| Nav2 또는 AMCL 종료 시 좌표 변환 실패 | `map → odom` TF가 사라지면 지도 좌표 기반 조준과 이동을 수행할 수 없음 |
+| 가깝고 높은 표적의 조준 범위 제한 | OpenManipulator-X의 `shoulder_lift` 관절 한계로 일부 좌표는 도달 불가능 |
+| YOLO 모델의 환경 의존성 | 프로젝트 실험 환경에서 수집한 단일 표적 데이터로 학습되어 새로운 배경과 조명에서는 추가 학습이 필요할 수 있음 |
+| 네트워크 상태에 따른 영상 지연 | Flask MJPEG 스트리밍과 ROS 2 토픽을 동시에 사용할 경우 Wi-Fi 대역폭의 영향을 받을 수 있음 |
 
-## 알려진 제약
+> 전체 인터페이스 제약과 세부 구현 내용은  
+> [`INTERFACE.md`](INTERFACE.md)의 부록을 참고하세요.
 
-종료 시점에 남아 있던 항목은 [`INTERFACE.md` 부록 B](INTERFACE.md) 에 정리했다. 주요한 것:
-
-- patrol_planner 가 jetson / desktop launch 양쪽에 정의돼 있어 동시에 띄우면 중복 발행된다
-- `desktop.launch.py` 는 patrol_planner 외에 전부 주석 처리된 상태다
-- Nav2/AMCL 을 끄면 `map → odom` TF 가 끊겨 좌표 해석이 실패한다
-- `shoulder_lift` 각도 한계 때문에 가깝고 높은 표적은 조준 범위를 벗어난다
+---
 
 ## 문서
 
@@ -313,7 +347,7 @@ RViz 의 `Publish Point`(P 키)로 맵을 클릭해도 TARGET 으로 들어간�
 |---|---|
 | [`INTERFACE.md`](INTERFACE.md) | 토픽 / 상태 머신 / 큐 정책 / 파라미터 계약 |
 | [`SETUP.md`](SETUP.md) | 설치 · 하드웨어 셋업 · 트러블슈팅 |
-| `config/config.yaml` | 모든 런타임 값의 단일 출처 |
+| [`config/config.yaml`](src/omx_aim/config/config.yaml) | 모든 런타임 값의 단일 출처 |
 
 ## 의존성
 
