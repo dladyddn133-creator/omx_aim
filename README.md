@@ -231,32 +231,56 @@ RViz 의 `Publish Point`(P 키)로 맵을 클릭해도 TARGET 으로 들어간�
 
 ---
 
-## 토픽 요약
+## ROS 2 Interfaces and Visualization
 
-전체 목록과 타입은 [`INTERFACE.md`](INTERFACE.md) 참조.
+<details>
+<summary><strong>주요 토픽 및 RViz 시각화 정보 펼쳐보기</strong></summary>
 
-**입력**
-- `/scout/map`, `/risk/risk_map`, `/scout/heartbeat`, `/scout/pose` — Burger
-- `/omx/target_in_map`, `/omx/patrol_in_map` — 좌표
-- `/omx/abort`, `/omx/arm_enable`, `/omx/fire_disable`, `/omx/control_mode` — 제어
+<br>
 
-**출력**
-- `/omx/fire` — 격발 신호 (fire_node 수신)
-- `/omx/nav_goal`, `/omx/nav_cancel` — 와플 이동
-- `/omx/state`, `/omx/status`, `/omx/queue_size` — 상태
+전체 토픽 목록, 메시지 타입 및 인터페이스 계약은  
+[`INTERFACE.md`](INTERFACE.md)를 참고하세요.
 
-## 시각화
+### Input Topics
 
-RViz 에 추가할 토픽:
-
-| 토픽 | 내용 |
+| Topic | Description |
 |---|---|
-| `/map` | Nav2 입력 맵 |
+| `/scout/map` | Active Scout가 생성한 SLAM 지도 |
+| `/risk/risk_map` | 객체 검출 결과를 누적한 위험 지도 |
+| `/scout/heartbeat` | Active Scout 동작 상태 |
+| `/scout/pose` | Active Scout의 현재 위치 |
+| `/omx/target_in_map` | 즉시 대응할 표적 좌표 |
+| `/omx/patrol_in_map` | 순찰 대상 좌표 |
+| `/omx/abort` | 현재 조준 및 이동 작업 긴급 중단 |
+| `/omx/arm_enable` | 자동 표적 검출 및 조준 활성화 |
+| `/omx/fire_disable` | 타격 장치 비활성화 |
+| `/omx/control_mode` | OMX 제어 모드 변경 |
+
+### Output Topics
+
+| Topic | Description |
+|---|---|
+| `/omx/fire` | `fire_node`로 전달되는 타격 신호 |
+| `/omx/nav_goal` | Leader Waffle의 Nav2 이동 목표 |
+| `/omx/nav_cancel` | 진행 중인 Nav2 이동 취소 |
+| `/omx/state` | 자동 조준 상태 머신의 현재 상태 |
+| `/omx/status` | OMX 서브시스템 동작 상태 |
+| `/omx/queue_size` | 대기 중인 좌표 작업 수 |
+
+### RViz Visualization
+
+| Topic | Description |
+|---|---|
+| `/map` | Nav2 입력 지도 |
 | `/risk/risk_map` | 위험도 히트맵 |
-| `/global_costmap/costmap` | Nav2 cost map |
-| `/patrol_planner/markers` | PATROL 후보 |
-| `/scout_watchdog/markers` | 수색 후보 |
-| `/omx/queue_markers` | 큐에 들어있는 좌표 |
+| `/global_costmap/costmap` | Nav2 Global Costmap |
+| `/patrol_planner/markers` | 순찰 후보 위치 |
+| `/scout_watchdog/markers` | Scout 장애 발생 시 수색 후보 |
+| `/omx/queue_markers` | 우선순위 큐에 등록된 좌표 |
+
+</details>
+
+---
 
 ## 진화 단계
 
