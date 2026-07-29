@@ -129,8 +129,6 @@ heartbeat + pose                auto_initialpose             waffle_node
 
 ---
 
----
-
 ## Tech Stack
 
 | Category | Technologies |
@@ -413,15 +411,25 @@ OMX Core Logic
 
 ---
 
-## 문서
+## Documentation
 
-| 문서 | 내용 |
+| Document | Description |
 |---|---|
-| [`INTERFACE.md`](INTERFACE.md) | 토픽 / 상태 머신 / 큐 정책 / 파라미터 계약 |
-| [`SETUP.md`](SETUP.md) | 설치 · 하드웨어 셋업 · 트러블슈팅 |
-| [`config/config.yaml`](src/omx_aim/config/config.yaml) | 모든 런타임 값의 단일 출처 |
+| [`INTERFACE.md`](INTERFACE.md) | ROS 2 토픽, 상태 머신, 우선순위 큐 및 파라미터 계약 |
+| [`SETUP.md`](SETUP.md) | 설치, Jetson 환경 구성, 하드웨어 설정 및 트러블슈팅 |
+| [`config/config.yaml`](src/omx_aim/config/config.yaml) | 조준, IBVS, 상태 머신 및 안전 기능의 런타임 설정 |
+| [`requirements.jetpack72.lock`](requirements.jetpack72.lock) | JetPack 7.2 환경에서 검증한 Python 패키지 버전 |
 
-## 의존성
+---
+
+## Dependencies
+
+<details>
+<summary><strong>ROS 2 및 Python 의존성 펼쳐보기</strong></summary>
+
+<br>
+
+### ROS 2 Packages
 
 ```bash
 sudo apt install \
@@ -429,8 +437,67 @@ sudo apt install \
   ros-jazzy-nav2-bringup \
   ros-jazzy-teleop-twist-keyboard \
   ros-jazzy-tf2-geometry-msgs
-
-pip install ultralytics opencv-python flask dynamixel-sdk Jetson.GPIO
 ```
 
-Jetson 환경은 패키지 버전 조합이 까다로워 `requirements.jetpack72.lock` 에 검증된 스냅샷을 남겨두었다. 자세한 절차는 [`SETUP.md`](SETUP.md) 참조.
+### Python Packages
+
+```bash
+pip install \
+  ultralytics \
+  opencv-python \
+  flask \
+  dynamixel-sdk \
+  Jetson.GPIO
+```
+
+Jetson 환경은 CUDA, PyTorch 및 Ultralytics의 버전 조합에 영향을 받습니다.
+
+프로젝트에서 검증한 패키지 조합은 다음 파일에 저장했습니다.
+
+```text
+requirements.jetpack72.lock
+```
+
+자세한 설치 절차와 문제 해결 방법은  
+[`SETUP.md`](SETUP.md)를 참고하세요.
+
+</details>
+
+---
+
+## Related Project
+
+### [ROS 2 Multi-Robot Autonomous Exploration & Response System](https://github.com/dladyddn133-creator/ROS2-Project)
+
+이 저장소의 OMX 자동 조준 시스템이 포함된 전체 다중 로봇 프로젝트입니다.
+
+전체 프로젝트에서는 다음 과정을 확인할 수 있습니다.
+
+- SAC 기반 Active Scout 자율 탐색
+- Cartographer SLAM 및 Bayesian Risk Map
+- ROS 2 Multi-Domain 통신
+- Leader Waffle의 Nav2 자율 이동
+- Custom YOLO11n 기반 표적 검출
+- IBVS 기반 OpenManipulator-X 자동 조준 및 타격
+- Scout 장애 감지와 Follower 임무 인계
+- 통합 웹 대시보드
+
+---
+
+## Project Status
+
+- OpenManipulator-X 자동 조준 및 타격 파이프라인 구현 완료
+- Custom YOLO11n 모델의 Jetson Orin Nano 실시간 적용 완료
+- Point-at IK 및 IBVS Pan/Tilt 제어 구현 완료
+- GPIO 타격 장치와 안전 상태 머신 통합 완료
+- Leader Waffle 실물 로봇 통합 테스트 및 데모 완료
+- 최종 구현은 커밋 `4810692`를 기준으로 보존하고 있습니다.
+
+---
+
+<div align="center">
+
+[⬆ Back to Top](#omx-auto-aim-subsystem)  
+[전체 다중 로봇 프로젝트 보기](https://github.com/dladyddn133-creator/ROS2-Project)
+
+</div>
